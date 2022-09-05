@@ -11,7 +11,7 @@ Writer: KyuJung Jun (kjun@berkeley.edu), Dr. Byungju Lee (blee89@kist.re.kr)
 
 from pymatgen.core.structure import Structure
 from pymatgen.io.vasp.outputs import Vasprun
-from pymatgen.analysis.diffusion_analyzer import DiffusionAnalyzer
+#from pymatgen.analysis.diffusion_analyzer import DiffusionAnalyzer
 from pymatgen.analysis.chemenv.coordination_environments.coordination_geometry_finder import LocalGeometryFinder, find_rotation
 from pymatgen.core.periodic_table import Element
 from pymatgen.core.sites import PeriodicSite
@@ -92,6 +92,7 @@ class HiddenPrints:
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
+'''
 class DA_new(DiffusionAnalyzer):
     def __init__(self, structure, displacements, specie, temperature,
                  time_step, step_skip, smoothed="max", min_obs=30,
@@ -142,7 +143,7 @@ class DA_new(DiffusionAnalyzer):
         return cls(structure, disp, specie, temperature, time_step,
                    step_skip=step_skip, lattices=l, disp_vs_time=np.array(dp_lattice), **kwargs)
 
-
+'''
 # In[4]:
 
 
