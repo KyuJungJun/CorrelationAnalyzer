@@ -23,6 +23,12 @@ import matplotlib.pyplot as plt
 from pyquaternion import Quaternion
 import scipy
 import pickle
+from multiprocessing import set_start_method
+
+try:
+    set_start_method('forkserver')
+except RuntimeError:
+    pass
 
 
 # In[2]:
@@ -488,6 +494,7 @@ class RotationAnalyzer:
                 rotation_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
                 rotation_list.append(np.array(rotation_add))
                 start_index += split
+                #p.close()
         for i in rotation_list:
             print(i.shape)
         rotations = np.concatenate([i for i in rotation_list], axis=1)
@@ -512,6 +519,8 @@ class RotationAnalyzer:
                 rotation_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
                 rotation_list.append(np.array(rotation_add))
                 start_index += split
+                #p.close()
+
         for i in rotation_list:
             print(i.shape)
         rotations = np.concatenate([i for i in rotation_list], axis=1)
