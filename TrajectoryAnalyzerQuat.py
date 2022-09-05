@@ -466,6 +466,102 @@ class RotationAnalyzer:
         return rotations
 
 
+
+
+
+
+    def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000):
+        '''
+        max_time_delay: dt value maximum (in fs)
+        n_process: number of cpu-cores
+        split: for each multiprocessing rounds, how many frames you want to split. i.e. 1000 steps = 10 step_skip*2 time_step = 20 ps
+        rotations object: [P-index, frames]
+        Memory to handle within the multiprocessing becomes excessive if you make the Pool handle too many trajectories.
+        Therefore, we split into "split" number of trajectories each time to analyze.
+        '''
+        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
+        rotation_list = []
+        start_index = 0
+        with multiprocessing.Pool(processes=n_process) as p:
+            while (start_index < len(self.rot_graph[0])-num_delayed_frames):
+                rotation_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
+                rotation_list.append(np.array(rotation_add))
+                start_index += split
+        for i in rotation_list:
+            print(i.shape)
+        rotations = np.concatenate([i for i in rotation_list], axis=1)
+        print(rotations.shape)
+        self.rotations_from_init = rotations
+        return rotations
+
+    def count_rot_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None, split=1000):
+        '''
+        max_time_delay: dt value maximum (in fs)
+        n_process: number of cpu-cores
+        split: for each multiprocessing rounds, how many frames you want to split. i.e. 1000 steps = 10 step_skip*2 time_step = 20 ps
+        rotations object: [P-index, frames]
+        Memory to handle within the multiprocessing becomes excessive if you make the Pool handle too many trajectories.
+        Therefore, we split into "split" number of trajectories each time to analyze.
+        '''
+        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
+        rotation_list = []
+        start_index = 0
+        with multiprocessing.Pool(processes=n_process) as p:
+            while (start_index < len(self.rot_graph[0])-num_delayed_frames):
+                rotation_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
+                rotation_list.append(np.array(rotation_add))
+                start_index += split
+        for i in rotation_list:
+            print(i.shape)
+        rotations = np.concatenate([i for i in rotation_list], axis=1)
+        print(rotations.shape)
+        self.rotations_each_time = rotations
+        return rotations
+
+
+
+    def lambda_from_init_split(self, index, num_delayed_frames, start_index, split):
+        '''
+        helper function for count_rot_graph_from_init_atomwise
+        '''
+        atom_info = []
+        for frameindex, frame in enumerate(self.rot_graph[index]):
+            if frameindex<start_index: continue
+                # Setting the start condition for this split analysis
+            if frameindex >= len(self.rot_graph[0])-num_delayed_frames:
+                break
+                # If it is the end of the entire trajectory, finish it here!
+            if frameindex >= start_index+split:
+                break
+                # End of the split, end here
+            time_info = []
+            for i in range(num_delayed_frames):
+                time_info.append(angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
+            atom_info.append(time_info)
+        return atom_info
+
+
+    def lambda_each_time_split(self, index, num_delayed_frames, start_index, split):
+        '''
+        helper function for count_rot_graph_from_init_atomwise
+        '''
+        atom_info = []
+        for frameindex, frame in enumerate(self.rot_graph[index]):
+            if frameindex<start_index: continue
+                # Setting the start condition for this split analysis
+            if frameindex >= len(self.rot_graph[0])-num_delayed_frames:
+                break
+                # If it is the end of the entire trajectory, finish it here!
+            if frameindex >= start_index+split:
+                break
+                # End of the split, end here
+            time_info = []
+            for i in range(num_delayed_frames):
+                time_info.append(angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
+            atom_info.append(time_info)
+        return atom_info
+
+    """
     def count_rot_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None):
         '''
         max_time_delay: dt value maximum (in fs)
@@ -477,8 +573,6 @@ class RotationAnalyzer:
         self.rotations_each_time = rotations
         return rotations
 
-
-
     def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None):
         '''
         max_time_delay: dt value maximum (in fs)
@@ -489,6 +583,7 @@ class RotationAnalyzer:
             rotations = p.starmap(self.lambda_from_init, [(i, num_delayed_frames) for i in range(len(self.rot_graph))])
         self.rotations_from_init = rotations
         return rotations
+        """
     def lambda_from_init(self, index, num_delayed_frames):
         '''
         helper function for count_rot_graph_from_init_atomwise
@@ -503,9 +598,8 @@ class RotationAnalyzer:
             atom_info.append(time_info)
         return atom_info
 
-
     def lambda_each_time(self, index, num_delayed_frames):
-        '''
+        '''  
         helper function for count_rot_graph_each_time_atomwise
         '''
         atom_info = []
