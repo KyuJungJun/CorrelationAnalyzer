@@ -919,7 +919,7 @@ class RotationAnalyzer:
         strs = []
         for x in paths:
             if os.path.exists('{}/vasprun.xml' .format(x)):   
-                temp_str = Vasprun('{}/vasprun.xml' .format(x), ionic_step_skip=step_skip, exception_on_bad_xml=False).structures
+                temp_str = Vasprun('{}/vasprun.xml' .format(x), ionic_step_skip=step_skip, exception_on_bad_xml=False, parse_potcar_file=False).structures
                 strs += temp_str
                 del temp_str
         
