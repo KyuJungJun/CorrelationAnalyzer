@@ -315,7 +315,7 @@ class RotationAnalyzer:
         self.time_step = time_step
         self.structures = structures
         self.neighbor_sets_matrix = []
-        self.rot_graph = []          
+        self.rot_graph = []  
         self.centers = []
         self.rotations_from_init = from_init
         self.rotations_each_time = each_time
@@ -330,8 +330,10 @@ class RotationAnalyzer:
         #    start_time = rot_graph[0, -1, 0] + self.time_step*self.step_skip
         #else:
         #    start_time = 0
-
-        if not info_dict:
+        if (not info_dict):
+            '''
+            Either starting from scratch, or starting from an archived rot graph information
+            '''
             print("Starting the analysis from scratch")
             # count the number of species
             indices = []
@@ -386,6 +388,18 @@ class RotationAnalyzer:
             self.info_dict['neighbor_sets_matrix']=self.neighbor_sets_matrix
             self.info_dict['split'] = self.split
             self.info_dict['part_index'] = self.part_index
+        elif info_dict['part_index']=='rot_graph_read':
+            self.info_dict = info_dict
+            self.structures = info_dict['structures']
+            self.time_step = info_dict['time_step']
+            self.step_skip = info_dict['step_skip']
+            self.temperature = info_dict['temperature']
+            self.species = info_dict['species']
+            self.centers = info_dict['centers']
+            self.neighbor_sets_matrix = info_dict['neighbor_sets_matrix']
+            self.split = info_dict['split']
+            self.part_index = info_dict['part_index']
+            self.rot_graph = rot_graph
         else:
             print('Plugging in the pre-analyzed information')
             self.info_dict = info_dict
@@ -422,15 +436,22 @@ class RotationAnalyzer:
                 np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
             if not len(self.rotations_from_init) == 0:
                 np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
-            if not len(self.rot_graph) == 0:
-                np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
+            #if not len(self.rot_graph) == 0:
+            #    np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         if self.part_index != None:
             if len(self.rotations_each_time) != 0:
                 np.save("{}/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
             if len(self.rotations_from_init) != 0:
                 np.save("{}/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
-            if len(self.rot_graph) != 0:
-                np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
+            #if len(self.rot_graph) != 0:
+            #    np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
+
+    def export_rot_graph_only(self, DIR):
+        with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
+            pickle.dump(self.info_dict, f)
+        if not len(self.rot_graph) == 0:
+            np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
+        
             
     def count_rot_from_graph_from_init(self, max_time_delay=3000, n_process=None):
         rotations=[]
@@ -505,6 +526,7 @@ class RotationAnalyzer:
         with multiprocessing.Pool(processes=n_process) as p:
             while (start_index < len(self.rot_graph[0])-num_delayed_frames):
                 if (part_index == None) or (part_index == split_index):
+                    print('Starmap launching now for from_init analysis')
                     rotation_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
                     rotation_list.append(np.array(rotation_add))
                 if split_index == part_index:
@@ -512,14 +534,14 @@ class RotationAnalyzer:
                 start_index += split
                 split_index += 1
                 #p.close()
-        for i in rotation_list:
-            print(i.shape)
+        #for i in rotation_list:
+        #    print(i.shape)
         if len(rotation_list)==0:
             self.rotations_from_init=np.array([])
             return []
         else:
             rotations = np.concatenate([i for i in rotation_list], axis=1)
-            print(rotations.shape)
+            #print(rotations.shape)
             self.rotations_from_init = rotations
             return rotations
 
@@ -541,6 +563,7 @@ class RotationAnalyzer:
         with multiprocessing.Pool(processes=n_process) as p:
             while (start_index < len(self.rot_graph[0])-num_delayed_frames):
                 if (part_index == None) or (part_index == split_index):
+                    print('Starmap launching now for each_time analysis')
                     rotation_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
                     rotation_list.append(np.array(rotation_add))
                 if split_index == part_index:
@@ -549,14 +572,14 @@ class RotationAnalyzer:
                 split_index += 1
                 #p.close()
 
-        for i in rotation_list:
-            print(i.shape)
+        #for i in rotation_list:
+        #    print(i.shape)
         if len(rotation_list)==0:
             self.rotations_each_time=np.array([])
             return []
         else:
             rotations = np.concatenate([i for i in rotation_list], axis=1)
-            print(rotations.shape)
+            #print(rotations.shape)
             self.rotations_each_time = rotations
             return rotations
 
@@ -848,6 +871,7 @@ class RotationAnalyzer:
 
     @classmethod
     def from_npys(cls, DIR):
+        print('Reading single npy file')
         rot_graph = np.load("{}/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
         from_init = np.load("{}/out_{}.npy".format(DIR, "from_init"), allow_pickle=True)
         each_time = np.load("{}/out_{}.npy".format(DIR, "each_time"), allow_pickle=True)
@@ -857,6 +881,7 @@ class RotationAnalyzer:
 
     @classmethod
     def from_many_npys(cls, DIR):
+        print('Reading multiple npy files and concatenating them')
         '''
         Read multiple npy files to make a combined class!
         '''
@@ -878,10 +903,19 @@ class RotationAnalyzer:
         info_dict['part_index']='combined'
         return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
 
+    @classmethod
+    def from_rot_graph(cls, DIR):
+        print('Reading pre-analyzed rot_graph')
+        rot_graph = np.load("{}/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
+        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            info_dict = pickle.load(f)
+        info_dict['part_index']='rot_graph_read'
+        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=None,each_time=None, rot_graph=rot_graph)
 
     
     @classmethod
     def from_paths(cls, paths, species, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
+        print('Reading structures from list of paths')
         strs = []
         for x in paths:
             if os.path.exists('{}/vasprun.xml' .format(x)):   
