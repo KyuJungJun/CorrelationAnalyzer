@@ -24,6 +24,7 @@ from pyquaternion import Quaternion
 import scipy
 import pickle
 from multiprocessing import set_start_method
+import sys
 
 try:
     set_start_method('forkserver')
@@ -319,6 +320,8 @@ class RotationAnalyzer:
         self.rotations_from_init = from_init
         self.rotations_each_time = each_time
         self.info_dict = info_dict
+        self.split = None
+        self.part_index = None
         start_time = 0 
         '''
         start_time : Seems like Byungju made it to continue adding new trajectories. At this moment, disable this.
@@ -381,6 +384,8 @@ class RotationAnalyzer:
             self.info_dict['species']=self.species
             self.info_dict['centers']=self.centers
             self.info_dict['neighbor_sets_matrix']=self.neighbor_sets_matrix
+            self.info_dict['split'] = self.split
+            self.info_dict['part_index'] = self.part_index
         else:
             print('Plugging in the pre-analyzed information')
             self.info_dict = info_dict
@@ -391,6 +396,8 @@ class RotationAnalyzer:
             self.species = info_dict['species']
             self.centers = info_dict['centers']
             self.neighbor_sets_matrix = info_dict['neighbor_sets_matrix']
+            self.split = info_dict['split']
+            self.part_index = info_dict['part_index']
             #self.rot_graph = text_input[0]
             #self.centers =  text_input[1]
             #print('Imported from text file... neighbor_sets_matrix will not work')
@@ -407,15 +414,23 @@ class RotationAnalyzer:
 
 
     def export_rotation_analysis(self, DIR):
+
         with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
-        if not len(self.rotations_each_time) == 0:
-            np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
-        if not len(self.rotations_from_init) == 0:
-            np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
-        if not len(self.rot_graph) == 0:
-            np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
-
+        if self.part_index==None:
+            if not len(self.rotations_each_time) == 0:
+                np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
+            if not len(self.rotations_from_init) == 0:
+                np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
+            if not len(self.rot_graph) == 0:
+                np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
+        if self.part_index != None:
+            if len(self.rotations_each_time) != 0:
+                np.save("{}/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
+            if len(self.rotations_from_init) != 0:
+                np.save("{}/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
+            if len(self.rot_graph) != 0:
+                np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
             
     def count_rot_from_graph_from_init(self, max_time_delay=3000, n_process=None):
         rotations=[]
@@ -472,12 +487,7 @@ class RotationAnalyzer:
         self.rotations_from_init = rotations
         return rotations
 
-
-
-
-
-
-    def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000):
+    def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
         '''
         max_time_delay: dt value maximum (in fs)
         n_process: number of cpu-cores
@@ -489,20 +499,31 @@ class RotationAnalyzer:
         num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
         rotation_list = []
         start_index = 0
+        split_index = 0
+        self.split = split
+        self.part_index = part_index
         with multiprocessing.Pool(processes=n_process) as p:
             while (start_index < len(self.rot_graph[0])-num_delayed_frames):
-                rotation_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
-                rotation_list.append(np.array(rotation_add))
+                if (part_index == None) or (part_index == split_index):
+                    rotation_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
+                    rotation_list.append(np.array(rotation_add))
+                if split_index == part_index:
+                    break
                 start_index += split
+                split_index += 1
                 #p.close()
         for i in rotation_list:
             print(i.shape)
-        rotations = np.concatenate([i for i in rotation_list], axis=1)
-        print(rotations.shape)
-        self.rotations_from_init = rotations
-        return rotations
+        if len(rotation_list)==0:
+            self.rotations_from_init=np.array([])
+            return []
+        else:
+            rotations = np.concatenate([i for i in rotation_list], axis=1)
+            print(rotations.shape)
+            self.rotations_from_init = rotations
+            return rotations
 
-    def count_rot_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None, split=1000):
+    def count_rot_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
         '''
         max_time_delay: dt value maximum (in fs)
         n_process: number of cpu-cores
@@ -514,19 +535,30 @@ class RotationAnalyzer:
         num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
         rotation_list = []
         start_index = 0
+        split_index = 0
+        self.split = split
+        self.part_index = part_index
         with multiprocessing.Pool(processes=n_process) as p:
             while (start_index < len(self.rot_graph[0])-num_delayed_frames):
-                rotation_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
-                rotation_list.append(np.array(rotation_add))
+                if (part_index == None) or (part_index == split_index):
+                    rotation_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.rot_graph))])
+                    rotation_list.append(np.array(rotation_add))
+                if split_index == part_index:
+                    break
                 start_index += split
+                split_index += 1
                 #p.close()
 
         for i in rotation_list:
             print(i.shape)
-        rotations = np.concatenate([i for i in rotation_list], axis=1)
-        print(rotations.shape)
-        self.rotations_each_time = rotations
-        return rotations
+        if len(rotation_list)==0:
+            self.rotations_each_time=np.array([])
+            return []
+        else:
+            rotations = np.concatenate([i for i in rotation_list], axis=1)
+            print(rotations.shape)
+            self.rotations_each_time = rotations
+            return rotations
 
 
 
@@ -822,6 +854,30 @@ class RotationAnalyzer:
         with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
+
+    @classmethod
+    def from_many_npys(cls, DIR):
+        '''
+        Read multiple npy files to make a combined class!
+        '''
+        def read_output(type_output, DIR):
+            '''
+            Helper function to read multiple split output files (npy files)
+            '''
+            path = [x for x in os.listdir(DIR) if x.startswith('out_{}'.format(type_output))]
+            path.sort()
+            full_paths = ['{}/{}' .format(DIR, x) for x in path]
+            result_lists = [np.load(i, allow_pickle=True) for i in full_paths]
+            result_combined = np.concatenate(result_lists,axis=1)
+            return result_combined
+        rot_graph = read_output('rot_graph',DIR)
+        from_init = read_output('from_init', DIR)
+        each_time = read_output('each_time', DIR)
+        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            info_dict = pickle.load(f)
+        info_dict['part_index']='combined'
+        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
+
 
     
     @classmethod
