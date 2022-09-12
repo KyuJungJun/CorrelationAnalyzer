@@ -322,6 +322,7 @@ class RotationAnalyzer:
         self.info_dict = info_dict
         self.split = None
         self.part_index = None
+
         start_time = 0 
         '''
         start_time : Seems like Byungju made it to continue adding new trajectories. At this moment, disable this.
@@ -677,6 +678,108 @@ class RotationAnalyzer:
             atom_info.append(time_info)
         return atom_info
 
+    def count_rotations_from_each_time(self, ignored_angles=15, min_dt=100):
+        '''
+        parameter ignored_angles=15 : below this value are considered vibrations and smoothed out.
+        Set this value to zero if you want no smoothing.
+        parameter min_dt=100: the first dt scan, in fs unit (default value: 0.1 fs corresponding to a single vibration of rigid 10E13 attempt freq)
+        Algorithm:
+        1. generate a t0 vs dt=100 plot (y-axis=angles in degrees)
+        2. Make a list of the t0, which is the onset of each peaks with angle larger than ignored_angles
+        3. For each t0, keep increasing dt until the value sees a drop and find the maximum angle at which angle starts to decrease. 
+            For this task, use scipy.signal.find_peaks with respect to dt, then obtain the information about the first peak.
+        4. (Optional): peak['peak_heights'], but this gives you the center of the peak position.
+        Note, we can also use "scipy.find_peaks_cwt"
+        Note, we can also use "scipy.signal.peak_widths"
+        Note, now I think that using "ruptures" package to detect change is better.
+        If this does not work, set a very rough and simple cutoff.
+        Since ruptures can work with an unspecified number of changes, it is not 100% reliable and every time
+        the parameters may have to be checked. Therefore, let's use a very crude method.
+        parameter ; threshold. dt keep increasing, record the maximum value (cumul_max_dt) at each dt
+        until you meet a dt where angle < cumul_max_dt-threshold. Then, return cumul_max_dt and the time when it occured.
+        TBD: implement this!
+        '''
+        indices = []
+        for i in range(len(self.structures[0])):
+            if self.structures[0].species[i] == Element(self.species):
+                indices.append(i)
+        num_indices = len(indices)
+        starting_index = min(indices)
+
+
+
+
+        num_min_dt_frames = min_dt/self.step_skip/self.time_step
+        full_init_scan = []
+        full_init_peak = []
+        for P_index, P in enumerate(self.rotations_each_time):
+            init_scan = []
+            init_peak = []
+            for t0_index, t0_frame in enumerate(P):
+                val = t0_frame[num_min_dt_frames]
+                if val<min_dt:
+                    val = 0
+                init_scan.append(val)
+            onset = False
+            for t0_index, t0_angle in enumerate(init_scan):
+                if t0_angle>0 and onset == False:
+                    onset = True
+                    init_peak.append(t0_index)
+                if onset==0 and onset == True:
+                    onset = False
+            full_init_scan.append(init_scan)
+            full_init_peak.append(init_peak)
+        # Document the position of initial peaks.
+        # Now, for each peak position, we change dt and find the maximum value here.
+        for P_index, P in enumerate(full_init_peak):
+            for init_peak in P:
+                interested_t0 = self.rotations_each_time[P_index][init_peak]
+                firstmaxangle, firstmaxdt = self.maxangle(interested_t0)
+                # Now that we know when the rotation occured, let's record this rotation event
+                # as a Rotation object.
+                # duration is recorded as
+                rot_quat = self.rot_graph[P_index][interested_t0+firstmaxdt+num_min_dt_frames]* self.rot_graph[P_index][interested_t0].inverse
+                # Q(final) = P(diff) * I(init)
+                # P(diff) = Q(final)*I(init).inverse
+                event_time = (init_peak+num_min_dt_frames)*self.step_skip*self.time_step # in fs
+                duration = (firstmaxdt-num_min_dt_frames)*self.step_skip*self.time_step # in fs
+                r = Rotation(time=event_time, travel_time=duration,
+                             site=self.structures[init_peak+num_min_dt_frames][P_index+starting_index], angle=firstmaxangle, index=P_index, vector=rot_quat, rotation_threshold=None)
+
+
+    def maxangle(self, ar, tolerance):
+        '''
+        ar: 1D array of angles at t0, t0+dt, varying dt
+        tolerance: decreasing angle tolerance in degrees
+        this method finds the first maximum peak before any decrease is detected within the tolerance angle
+
+        Returns (max_so_far, max_index)
+        max_so_far: the maximum angle of rotation
+        max_index: the time it took to reach the maximum angle of rotation
+        '''
+        max_so_far = ar[0]
+        max_index = 0
+        for index, i in enumerate(ar):
+            if i>max_so_far:
+                max_so_far = i
+                max_index = index
+            if i<max_so_far-tolerance:
+                return (max_so_far, max_index)
+        return (max_so_far, max_index)
+
+    '''
+    IDEA; once we compute the hops and rotations and find that certain hops occur within temporal and spatial proximity to a rotation event, let's try to debunk the notion
+    that PS4 pushes the lithium. 
+    Based on the center P atom, assuming that the lithium exactly follows the PS4 rotation, we can find the hypothetical coordinate of the Li_rotated.
+    Li_rotated - Li_init vs. Li_hopped_Li_init -> For these two vectors, we can compute the angle between these two vectors. If angle is closer to zero, then there is a correlation between the PS4
+    rotation direction and Li-hop.        
+    '''
+
+
+
+        def helper_fn_decrease():
+            return
+        
 
 
         for a, atom in enumerate(self.rot_graph):
