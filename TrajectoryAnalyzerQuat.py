@@ -33,6 +33,7 @@ except RuntimeError:
 
 # In[2]:
 def angle_quat(x,y):
+    print("Deprecated, do not use Quaternion.sym_distance")
     '''
     x, y: PyQuaternion objects
     TBD: check what is the difference in various distance metric for quaternions
@@ -194,7 +195,6 @@ class HHCorrelation:
 #         else:
 #             self.distance = Hop1.ini_site.distance(Hop2.fin_site)
         self.distance = np.average([Hop1.ini_site.distance(Hop2.ini_site), Hop1.fin_site.distance(Hop2.fin_site)])
-    
         self.angle = angle_two_vector(Hop1.vector, Hop2.vector)
         
               
@@ -303,16 +303,16 @@ class HoppingAnalyzer:
 
     
 class Rotation:
-    def __init__(self, time, travel_time, site, angle, index, vector, rotation_threshold):
+    def __init__(self, time, duration, angle, index, site, rotation_q, final_q, init_q):
         self.time = time
-        self.travel_time = travel_time
-        self.fin_angle = angle
+        self.duration = duration
+        self.angle = angle
         self.index = index
-        self.vector = vector
         self.site = site
-        self.ini_angle = copy.copy(self.fin_angle)
-        self.rotation_threshold = rotation_threshold
-        
+        self.rotation_q = rotation_q
+        self.final_q = final_q
+        self.init_q = init_q
+
 class RHCorrelation:
     def __init__(self, Rotation, Hop, time_scale, length_scale):
         self.indice = [Rotation.index, Hop.index]
@@ -403,7 +403,7 @@ class RotationAnalyzer:
 
             print('Rotation information successfully archived')
             self.info_dict = {}
-            self.info_dict['structures']=self.structures
+            #self.info_dict['structures']=self.structures
             self.info_dict['time_step']=self.time_step
             self.info_dict['step_skip']=self.step_skip
             self.info_dict['temperature']=self.temperature
@@ -417,7 +417,8 @@ class RotationAnalyzer:
             Only rotation graph is exported (with info_dict), not from_init or each_time
             '''
             self.info_dict = info_dict
-            self.structures = info_dict['structures']
+            self.structures = structures
+            #self.structures = info_dict['structures']
             self.time_step = info_dict['time_step']
             self.step_skip = info_dict['step_skip']
             self.temperature = info_dict['temperature']
@@ -430,7 +431,8 @@ class RotationAnalyzer:
         else:
             print('Plugging in the pre-analyzed information')
             self.info_dict = info_dict
-            self.structures = info_dict['structures']
+            self.structures = structures
+            #self.structures = info_dict['structures']
             self.time_step = info_dict['time_step']
             self.step_skip = info_dict['step_skip']
             self.temperature = info_dict['temperature']
@@ -465,6 +467,8 @@ class RotationAnalyzer:
 
         with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
+        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+            pickle.dump(self.structures, f)
         if self.part_index==None:
             if not len(self.rotations_each_time) == 0:
                 np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
@@ -786,12 +790,15 @@ class RotationAnalyzer:
                 event_time = event_frame*self.step_skip*self.time_step # in fs
                 # duration is recorded as the time to reach the maximum angle
                 duration = duration_frame*self.step_skip*self.time_step # in fs
-                rot_quat = self.rot_graph[P_index][event_frame+duration_frame][1]* self.rot_graph[P_index][event_frame][1].inverse
+                final_q = self.rot_graph[P_index][event_frame+duration_frame][1]
+                init_q = self.rot_graph[P_index][event_frame][1]
+                rot_quat = final_q * init_q.inverse
                 # Q(final) = P(diff) * I(init)
                 # P(diff) = Q(final)*I(init).inverse
                 # we have [1] because rot_graph[P_index][time_index] = np.array([time in fs, Quaternion object])
-                r = Rotation(time=event_time, travel_time=duration,
-                             site=self.structures[init_peak+num_min_dt_frames][P_index+starting_index], angle=firstmaxangle, index=P_index, vector=rot_quat, rotation_threshold=None)
+                r = Rotation(time=event_time, duration=duration, angle=firstmaxangle, index=P_index+starting_index,
+                             site=self.structures[init_peak+num_min_dt_frames][P_index+starting_index],
+                             rotation_q=rot_quat, final_q=final_q, init_q=init_q)
                 P_rots.append(r)
             rot_out.append(P_rots)
         return rot_out
@@ -1038,7 +1045,7 @@ class RotationAnalyzer:
         return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
 
     @classmethod
-    def from_many_npys(cls, DIR):
+    def from_many_npys(cls, DIR, read_structures=False):
         print('Reading multiple npy files and concatenating them')
         '''
         Read multiple npy files to make a combined class!
@@ -1063,8 +1070,14 @@ class RotationAnalyzer:
         with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='combined'
+        if read_structures:
+            print("Reading structures")
+            with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+                structures = pickle.load(f)
+        else:
+            structures = None
         print("RotationAnalyzer ready")
-        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
 
     @classmethod
     def from_rot_graph(cls, DIR):
