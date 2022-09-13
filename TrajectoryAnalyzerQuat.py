@@ -333,7 +333,8 @@ class RotationAnalyzer:
         #    start_time = 0
         if (not info_dict):
             '''
-            Either starting from scratch, or starting from an archived rot graph information
+            Determine Either starting from scratch, or starting from an archived rot graph information
+            This case: we have no info_dict, so we start from scratch
             '''
             print("Starting the analysis from scratch")
             # count the number of species
@@ -390,6 +391,9 @@ class RotationAnalyzer:
             self.info_dict['split'] = self.split
             self.info_dict['part_index'] = self.part_index
         elif info_dict['part_index']=='rot_graph_read':
+            '''
+            Only rotation graph is exported (with info_dict), not from_init or each_time
+            '''
             self.info_dict = info_dict
             self.structures = info_dict['structures']
             self.time_step = info_dict['time_step']
@@ -411,8 +415,15 @@ class RotationAnalyzer:
             self.species = info_dict['species']
             self.centers = info_dict['centers']
             self.neighbor_sets_matrix = info_dict['neighbor_sets_matrix']
-            self.split = info_dict['split']
-            self.part_index = info_dict['part_index']
+            if "split" in info_dict.keys():
+                self.split = info_dict['split']
+            else:
+                self.split = None
+            if "part_index" in info_dict.keys():
+                self.part_index = info_dict['part_index']
+            else:
+                self.part_index = None
+            self.rot_graph = rot_graph
             #self.rot_graph = text_input[0]
             #self.centers =  text_input[1]
             #print('Imported from text file... neighbor_sets_matrix will not work')
@@ -495,11 +506,15 @@ class RotationAnalyzer:
         num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
 
         for a, atom in enumerate(self.rot_graph):
+            '''
+            Note, rot_graph[P_index][0] = time in fs, rot_graph[1] = Quaternion object (referenced to the start of the simulation
+            '''
             atom_info = []
             for frameindex, frame in enumerate(atom):
                 if frameindex >= len(atom)-num_delayed_frames:
                     break
                 with multiprocessing.Pool(processes=n_process) as p:
+                    # atom[0][1] is this P's first snapshot's quaternion object
                     time_info = p.starmap(angle_quat, [(atom[0][1], atom[frameindex+i][1]) for i in range(num_delayed_frames)])
                 atom_info.append(time_info)
             rotations.append(atom_info)
@@ -706,10 +721,9 @@ class RotationAnalyzer:
         num_indices = len(indices)
         starting_index = min(indices)
 
-
-
-
         num_min_dt_frames = min_dt/self.step_skip/self.time_step
+        assert num_min_dt_frames.is_integer()
+        num_min_dt_frames = int(num_min_dt_frames)
         full_init_scan = []
         full_init_peak = []
         for P_index, P in enumerate(self.rotations_each_time):
@@ -717,49 +731,65 @@ class RotationAnalyzer:
             init_peak = []
             for t0_index, t0_frame in enumerate(P):
                 val = t0_frame[num_min_dt_frames]
-                if val<min_dt:
+                val = val*180/np.pi
+                # CONVERTING FROM RADIAN TO DEGREES
+                if val<ignored_angles:
                     val = 0
                 init_scan.append(val)
             onset = False
             for t0_index, t0_angle in enumerate(init_scan):
-                if t0_angle>0 and onset == False:
+                if (t0_angle>0) and (onset == False):
+                    # Start of a rotation!
+                    # FYI, continuation of a rotation would be t0_angle >0 and onset = True
                     onset = True
                     init_peak.append(t0_index)
-                if onset==0 and onset == True:
+                    continue
+                if (t0_angle==0) and (onset == True):
                     onset = False
+                    # Finish of a rotation
             full_init_scan.append(init_scan)
             full_init_peak.append(init_peak)
         # Document the position of initial peaks.
         # Now, for each peak position, we change dt and find the maximum value here.
+        rot_out = []
         for P_index, P in enumerate(full_init_peak):
+            P_rots = []
             for init_peak in P:
-                interested_t0 = self.rotations_each_time[P_index][init_peak]
-                firstmaxangle, firstmaxdt = self.maxangle(interested_t0)
+                interested_t0 = self.rotations_each_time[P_index][init_peak] # In 1D list of radians with increasing dt at fixed t0
+                firstmaxangle, firstmaxdt = self.maxangle(interested_t0, 15) # In degrees!
                 # Now that we know when the rotation occured, let's record this rotation event
                 # as a Rotation object.
-                # duration is recorded as
-                rot_quat = self.rot_graph[P_index][interested_t0+firstmaxdt+num_min_dt_frames]* self.rot_graph[P_index][interested_t0].inverse
+                event_frame = init_peak+num_min_dt_frames
+                duration_frame = firstmaxdt-num_min_dt_frames
+                event_time = event_frame*self.step_skip*self.time_step # in fs
+                # duration is recorded as the time to reach the maximum angle
+                duration = duration_frame*self.step_skip*self.time_step # in fs
+                rot_quat = self.rot_graph[P_index][event_frame+duration_frame][1]* self.rot_graph[P_index][event_frame][1].inverse
                 # Q(final) = P(diff) * I(init)
                 # P(diff) = Q(final)*I(init).inverse
-                event_time = (init_peak+num_min_dt_frames)*self.step_skip*self.time_step # in fs
-                duration = (firstmaxdt-num_min_dt_frames)*self.step_skip*self.time_step # in fs
+                # we have [1] because rot_graph[P_index][time_index] = np.array([time in fs, Quaternion object])
                 r = Rotation(time=event_time, travel_time=duration,
                              site=self.structures[init_peak+num_min_dt_frames][P_index+starting_index], angle=firstmaxangle, index=P_index, vector=rot_quat, rotation_threshold=None)
+                P_rots.append(r)
+            rot_out.append(P_rots)
+        return rot_out
 
 
-    def maxangle(self, ar, tolerance):
+    def maxangle(self, ar, tolerance=15):
         '''
         ar: 1D array of angles at t0, t0+dt, varying dt
         tolerance: decreasing angle tolerance in degrees
         this method finds the first maximum peak before any decrease is detected within the tolerance angle
 
         Returns (max_so_far, max_index)
-        max_so_far: the maximum angle of rotation
+        max_so_far: the maximum angle of rotation in degrees
         max_index: the time it took to reach the maximum angle of rotation
         '''
-        max_so_far = ar[0]
+        ar_in_deg = ar.copy()
+        ar_in_deg = ar_in_deg*180/np.pi
+        max_so_far = ar_in_deg[0]
         max_index = 0
-        for index, i in enumerate(ar):
+        for index, i in enumerate(ar_in_deg):
             if i>max_so_far:
                 max_so_far = i
                 max_index = index
@@ -776,12 +806,7 @@ class RotationAnalyzer:
     '''
 
 
-
-        def helper_fn_decrease():
-            return
-        
-
-
+    '''
         for a, atom in enumerate(self.rot_graph):
             atom_info = []
             for frameindex, frame in enumerate(atom):
@@ -796,7 +821,7 @@ class RotationAnalyzer:
                 #    rotations.append(atom_info)
         self.rotations_from_init = rotations
         return rotations
-        '''
+       
         rotations = []
         num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
 
@@ -812,7 +837,7 @@ class RotationAnalyzer:
             rotations.append(atom_info)
         self.rotations_each_time = rotations
         return rotations
-        '''
+    '''
 
     def plot_rotations(self, mode, P_index='all',vmax=180):
         if mode=='from_init':
@@ -998,12 +1023,17 @@ class RotationAnalyzer:
             result_lists = [np.load(i, allow_pickle=True) for i in full_paths]
             result_combined = np.concatenate(result_lists,axis=1)
             return result_combined
+        print("Reading rot_graph")
         rot_graph = read_output('rot_graph',DIR)
+        print("Reading from_init")
         from_init = read_output('from_init', DIR)
+        print("Reading each_time")
         each_time = read_output('each_time', DIR)
+        print("Reading info_dict")
         with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='combined'
+        print("RotationAnalyzer ready")
         return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
 
     @classmethod
