@@ -487,6 +487,8 @@ class RotationAnalyzer:
     def export_rot_graph_only(self, DIR):
         with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
+        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+            pickle.dump(self.structures, f)
         if not len(self.rot_graph) == 0:
             np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         
@@ -1072,7 +1074,7 @@ class RotationAnalyzer:
         info_dict['part_index']='combined'
         if read_structures:
             print("Reading structures")
-            with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
                 structures = pickle.load(f)
         else:
             structures = None
@@ -1080,13 +1082,18 @@ class RotationAnalyzer:
         return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
 
     @classmethod
-    def from_rot_graph(cls, DIR):
+    def from_rot_graph(cls, DIR, read_structures=False):
         print('Reading pre-analyzed rot_graph')
         rot_graph = np.load("{}/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
         with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='rot_graph_read'
-        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=None,each_time=None, rot_graph=rot_graph)
+        if read_structures:
+            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+                structures = pickle.load(f)
+        else:
+            structures = None
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=None,each_time=None, rot_graph=rot_graph)
 
     
     @classmethod
