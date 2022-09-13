@@ -3,10 +3,9 @@
 
 # In[1]:
 '''
-Version: September 2nd, 2022 V0.2
+CorrelationAnalyzer
+Version: September 13nd, 2022 V0.3
 Writer: KyuJung Jun (kjun@berkeley.edu), Dr. Byungju Lee (blee89@kist.re.kr)
-
-
 '''
 
 from pymatgen.core.structure import Structure
@@ -37,8 +36,27 @@ def angle_quat(x,y):
     '''
     x, y: PyQuaternion objects
     TBD: check what is the difference in various distance metric for quaternions
+    Note: This formulation is more numerically stable when performing iterative gradient descent
+    on the Riemannian quaternion manifold.
+    However, the distance between q and -q is equal to pi, rendering this formulation not useful
+    for measuring rotation similarities when the samples are spread over a "solid" angle of more than pi/2 radians
+    (the spread refers to quaternions as point samples on the unit hypersphere).
     '''
     return Quaternion.sym_distance(x,y)
+"""
+def abs_angle_quat(x,y):
+    return Quaternion.distance(x,y)
+
+"""
+def abs_angle_quat(x,y):
+    '''
+    x, y: PyQuaternion objects
+    returns the angle in radians
+    Note: This function does not measure the distance on the hypersphere,
+    but it takes into account the fact that q and -q encode the same rotation.
+    It is thus a good indicator for rotation similarities.
+    '''
+    return Quaternion.absolute_distance(x,y)
 
 def angle_two_vector(va, vb):
     cosine_angle = np.round(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb)), decimals=5)
@@ -361,6 +379,10 @@ class RotationAnalyzer:
 #             self.neighbor_sets_matrix = np.transpose(np.array(self.neighbor_sets_matrix))
 
             # Save rotation graph
+            '''
+            TBD: determine whether we want to reference our quaternions based on t0
+            or relaxed position (which we need another Structure object input)
+            '''
             for i, tet in enumerate(self.neighbor_sets_matrix): # KJ-For each P-sites
                 temp_placeholder = []
                 for t, time in enumerate(tet):
@@ -617,7 +639,7 @@ class RotationAnalyzer:
                 # End of the split, end here
             time_info = []
             for i in range(num_delayed_frames):
-                time_info.append(angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
+                time_info.append(abs_angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
             atom_info.append(time_info)
         return atom_info
 
@@ -638,7 +660,7 @@ class RotationAnalyzer:
                 # End of the split, end here
             time_info = []
             for i in range(num_delayed_frames):
-                time_info.append(angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
+                time_info.append(abs_angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
             atom_info.append(time_info)
         return atom_info
 
@@ -675,7 +697,7 @@ class RotationAnalyzer:
                 break
             time_info = []
             for i in range(num_delayed_frames):
-                time_info.append(angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
+                time_info.append(abs_angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
             atom_info.append(time_info)
         return atom_info
 
@@ -689,11 +711,11 @@ class RotationAnalyzer:
                 break
             time_info = []
             for i in range(num_delayed_frames):
-                time_info.append(angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
+                time_info.append(abs_angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
             atom_info.append(time_info)
         return atom_info
 
-    def count_rotations_from_each_time(self, ignored_angles=15, min_dt=100):
+    def count_rotations_from_each_time(self, ignored_angles=15, firstmax_detector=15, min_dt=100):
         '''
         parameter ignored_angles=15 : below this value are considered vibrations and smoothed out.
         Set this value to zero if you want no smoothing.
@@ -756,7 +778,7 @@ class RotationAnalyzer:
             P_rots = []
             for init_peak in P:
                 interested_t0 = self.rotations_each_time[P_index][init_peak] # In 1D list of radians with increasing dt at fixed t0
-                firstmaxangle, firstmaxdt = self.maxangle(interested_t0, 15) # In degrees!
+                firstmaxangle, firstmaxdt = self.maxangle(interested_t0, firstmax_detector) # In degrees!
                 # Now that we know when the rotation occured, let's record this rotation event
                 # as a Rotation object.
                 event_frame = init_peak+num_min_dt_frames
@@ -839,7 +861,13 @@ class RotationAnalyzer:
         return rotations
     '''
 
-    def plot_rotations(self, mode, P_index='all',vmax=180):
+    def plot_rotations(self, mode, P_index='all',vmax=180, filename=None):
+        '''
+        Plot t0-dt diagram
+        Functionalities to add:
+        (1) split into 50 ps diagrams (250 ps simulation would end up with 5 * 50 ps diagrams)
+        (2) if we know the time when rotation was detected, also plot those information here
+        '''
         if mode=='from_init':
             rotations = self.rotations_from_init
         elif mode=='each_time':
@@ -879,6 +907,8 @@ class RotationAnalyzer:
             ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
             ax.set_xlabel(r'$t_0$ (ps)')
             ax.set_ylabel(r'$dt$ (ps)')
+            if filename:
+                fig.savefig(filename+'.pdf', dpi=300)
             return
         """
         angle = np.radians(self.rot_graph[:, 1:, 1:]) # Indices: P-site, time, angle_information
