@@ -340,6 +340,7 @@ class RotationAnalyzer:
         self.info_dict = info_dict
         self.split = None
         self.part_index = None
+        self.init_structure = None
 
         start_time = 0 
         '''
@@ -349,6 +350,7 @@ class RotationAnalyzer:
         #    start_time = rot_graph[0, -1, 0] + self.time_step*self.step_skip
         #else:
         #    start_time = 0
+
         if (not info_dict):
             '''
             Determine Either starting from scratch, or starting from an archived rot graph information
@@ -741,6 +743,7 @@ class RotationAnalyzer:
         parameter ; threshold. dt keep increasing, record the maximum value (cumul_max_dt) at each dt
         until you meet a dt where angle < cumul_max_dt-threshold. Then, return cumul_max_dt and the time when it occured.
         TBD: implement this!
+        # Add init_structure to the dictionary information
         '''
         indices = []
         for i in range(len(self.structures[0])):
@@ -870,8 +873,13 @@ class RotationAnalyzer:
         return rotations
     '''
 
-    def plot_rotations(self, mode, P_index='all',vmax=180, filename=None):
+    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, filename=None):
         '''
+        parameter mode: "from_init" or "each_time"
+        parameter time_per_image: how to split the long trajectory info (in ps), default = 50 ps
+        parameter P_index: 'all' to plot all information, or P_index (int)
+        paramter vmax: maximum degree for the colormap
+        parameter filename: default None (not save)
         Plot t0-dt diagram
         Functionalities to add:
         (1) split into 50 ps diagrams (250 ps simulation would end up with 5 * 50 ps diagrams)
