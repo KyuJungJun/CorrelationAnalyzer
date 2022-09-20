@@ -340,7 +340,7 @@ class RotationAnalyzer:
         self.info_dict = info_dict
         self.split = None
         self.part_index = None
-        self.init_structure = None
+        self.structures = structures
 
         start_time = 0 
         '''
@@ -350,6 +350,15 @@ class RotationAnalyzer:
         #    start_time = rot_graph[0, -1, 0] + self.time_step*self.step_skip
         #else:
         #    start_time = 0
+        #if structures:
+        #    self.info_dict['init_structure']=self.init_structure
+
+        if not info_dict:
+            MODE = 'SCRATCH'
+        elif info_dict['part_index']=='rot_graph_read':
+            MODE = 'GRAPH_READ'
+        elif info_dict['part_index']=='combined':
+            MODE = 'COMBINED'
 
         if (not info_dict):
             '''
@@ -414,13 +423,14 @@ class RotationAnalyzer:
             self.info_dict['neighbor_sets_matrix']=self.neighbor_sets_matrix
             self.info_dict['split'] = self.split
             self.info_dict['part_index'] = self.part_index
+            self.info_dict['init_structure'] = structures[0]
         elif info_dict['part_index']=='rot_graph_read':
             '''
             Only rotation graph is exported (with info_dict), not from_init or each_time
             '''
             self.info_dict = info_dict
-            self.structures = structures
-            #self.structures = info_dict['structures']
+            if ((structures) and (not self.info_dict['init_structure'])):
+                self.info_dict['init_structure'] = structures[0]
             self.time_step = info_dict['time_step']
             self.step_skip = info_dict['step_skip']
             self.temperature = info_dict['temperature']
@@ -430,11 +440,10 @@ class RotationAnalyzer:
             self.split = info_dict['split']
             self.part_index = info_dict['part_index']
             self.rot_graph = rot_graph
+
         else:
             print('Plugging in the pre-analyzed information')
             self.info_dict = info_dict
-            self.structures = structures
-            #self.structures = info_dict['structures']
             self.time_step = info_dict['time_step']
             self.step_skip = info_dict['step_skip']
             self.temperature = info_dict['temperature']
@@ -746,8 +755,8 @@ class RotationAnalyzer:
         # Add init_structure to the dictionary information
         '''
         indices = []
-        for i in range(len(self.structures[0])):
-            if self.structures[0].species[i] == Element(self.species):
+        for i in range(len(self.info_dict['init_structure'])):
+            if self.info_dict['init_structure'].species[i] == Element(self.species):
                 indices.append(i)
         num_indices = len(indices)
         starting_index = min(indices)
@@ -801,9 +810,12 @@ class RotationAnalyzer:
                 # Q(final) = P(diff) * I(init)
                 # P(diff) = Q(final)*I(init).inverse
                 # we have [1] because rot_graph[P_index][time_index] = np.array([time in fs, Quaternion object])
+                if self.structures:
+                    site = self.structures[init_peak+num_min_dt_frames][P_index+starting_index]
+                else:
+                    site = self.info_dict['init_structure'][P_index+starting_index]
                 r = Rotation(time=event_time, duration=duration, angle=firstmaxangle, index=P_index+starting_index,
-                             site=self.structures[init_peak+num_min_dt_frames][P_index+starting_index],
-                             rotation_q=rot_quat, final_q=final_q, init_q=init_q)
+                             site=site, rotation_q=rot_quat, final_q=final_q, init_q=init_q)
                 P_rots.append(r)
             rot_out.append(P_rots)
         return rot_out
@@ -1060,12 +1072,14 @@ class RotationAnalyzer:
         '''
         Read multiple npy files to make a combined class!
         '''
-        def read_output(type_output, DIR):
+        def read_output(type_output, DIR, split=False):
             '''
             Helper function to read multiple split output files (npy files)
             '''
             path = [x for x in os.listdir(DIR) if x.startswith('out_{}'.format(type_output))]
             path.sort()
+            if split:
+                path = [x for x in path if x.split('_')[-1][:3].isdigit() ]
             full_paths = ['{}/{}' .format(DIR, x) for x in path]
             result_lists = [np.load(i, allow_pickle=True) for i in full_paths]
             result_combined = np.concatenate(result_lists,axis=1)
@@ -1073,9 +1087,9 @@ class RotationAnalyzer:
         print("Reading rot_graph")
         rot_graph = read_output('rot_graph',DIR)
         print("Reading from_init")
-        from_init = read_output('from_init', DIR)
+        from_init = read_output('from_init', DIR, split=True)
         print("Reading each_time")
-        each_time = read_output('each_time', DIR)
+        each_time = read_output('each_time', DIR, split=True)
         print("Reading info_dict")
         with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
