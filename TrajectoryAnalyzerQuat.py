@@ -732,6 +732,39 @@ class RotationAnalyzer:
             atom_info.append(time_info)
         return atom_info
 
+    def count_rotations_single_dt(self, dt, min_peak_height, peak_width=None):
+        '''
+        parameter dt: dt scan (in fs), use default = 1000 fs, corresponding to 1 THz phonon frequency
+        min_peak_height: minimum peak height parameter for scipy.signal.find_peaks, this does not matter that much
+        peak_width: min peak width for scipy.signal.find_peaks, default set to none
+        '''
+        num_dt_frames = dt/self.step_skip/self.time_step
+        assert num_dt_frames.is_integer()
+        num_dt_frames = int(num_dt_frames)
+        all_peaks = []
+        for P_index, arr in enumerate(self.rotations_each_time):
+            peak, info = scipy.signal.find_peaks(arr, height=min_peak_height, peak_width=peak_width)
+            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights']*180/np.pi, "info":info[i]
+                          ,"P_index":P_index} for i in range(len(peak))]
+            all_peaks.append(peak_dict)
+        with open('single_dt_counter.pkl', 'wb') as f:
+            pickle.dump(all_peaks, f)
+        return all_peaks
+        '''
+        indices = []
+        for i in range(len(self.info_dict['init_structure'])):
+            if self.info_dict['init_structure'].species[i] == Element(self.species):
+                indices.append(i)
+        num_indices = len(indices)
+        starting_index = min(indices)
+        for i in all_peaks:
+            for j in i:
+                Rotation(time=j['time'],duration=info['width'], angle=j['height'],
+                         index=j['P_index'], site=self.info_dict['init_structure'][starting_index+P_index],
+                         rotation_q = , final_q = , init_q = )
+
+        '''
+
     def count_rotations_from_each_time(self, ignored_angles=15, firstmax_detector=15, min_dt=100):
         '''
         parameter ignored_angles=15 : below this value are considered vibrations and smoothed out.
