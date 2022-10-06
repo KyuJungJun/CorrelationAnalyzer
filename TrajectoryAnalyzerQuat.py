@@ -24,6 +24,8 @@ import scipy
 import pickle
 from multiprocessing import set_start_method
 import sys
+import pandas as pd
+
 
 try:
     set_start_method('forkserver')
@@ -1193,8 +1195,80 @@ class RotationAnalyzer:
                 strs += temp_str
                 del temp_str
         
-        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph)    
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph)
 
+class CorrelationCollection:
+    def __init__(self, DIR):
+        self.DIR = DIR
+        self.rot_dict_list = []
+
+    def read_rot_objects(self, exclude=None):
+        '''
+        Using the directory information (self.DIR), read all of the RotationAnalyzer objects
+        and make initial list for self.rot_dict
+        '''
+        if len(self.rot_dict_list) > 0:
+            print('Rot Objects already processed, skipping re-reading process')
+            return
+        for root, dirs, files in os.walk(self.DIR):
+            for i in dirs:
+                if i.endswith('K'):
+                    if i.split('K')[0].isdigit():
+                        temp = int(i.split('K')[0])
+                        if temp in exclude:
+                            continue
+                        print("Reading temperature data at {}K".format(temp))
+                        rot_object = RotationAnalyzer.from_many_npys(root + '/' + i, read_structures=False)
+                        temp_dictionary = {'T': temp, 'rot_object': rot_object,
+                                           'num_frames': len(rot_object.rot_graph[0])}
+                        rot_count_file = "{}/{}/single_dt_counter.pkl".format(root, i)
+                        with open(rot_count_file, 'rb') as f:
+                            rots = pickle.load(f)
+                        temp_dictionary['rots'] = rots
+                        # Add more here when I need to record more information for general analysis
+                        self.rot_dict_list.append(temp_dictionary)
+            break
+        print("Total temperature data {} loaded".format(len(self.rot_dict_list)))
+        return
+
+    def plot_arrhenius(self, min_angle=10):
+        '''
+        rot_object_dict : {'temperature':temperature, 'rot_object':RotationAnalyzer Object}
+        path : Path where we have single_dt_counter.pkl object
+        '''
+        Ts = []
+        freq = []
+        for i in self.rot_dict_list:
+            rots = []
+            for j in i['rots']:
+                rots.extend([x['height'] for x in j])
+                # rots.append(j)
+            # rots = [x['height'] for x in i['rots']]
+            rots = [i for i in rots if i > min_angle]
+            simulation_time = i['num_frames'] * i['rot_object'].time_step * i['rot_object'].step_skip / 1000
+            # Simulation time in ps units
+            normalized_rots = len(rots) / simulation_time / 16
+            # Number of rotations ps per PS4
+            if normalized_rots > 0:
+                # Only plot the datapoints where there is at least one rotation detected
+                freq.append(normalized_rots)
+                Ts.append(i['T'])
+        inverse_T = [1000 / i for i in Ts]
+        ln_freq = [np.log(i) for i in freq]
+        fig, ax = plt.subplots(figsize=(10, 7))
+        ax.scatter(inverse_T, ln_freq)
+
+        ax.set_xlabel("1000/T (1/K)")
+        ax.set_ylabel(r"$Rotations per ps per PS_4 (1/ps/n_{P})$")
+        fits = scipy.stats.linregress(inverse_T, ln_freq)
+        print("Activation energy : {} eV".format(-1 * fits.slope * 8.617E-5 * 1000))
+        linear_x = np.linspace(min(inverse_T), max(inverse_T), 100)
+        linear_y = np.linspace * fits.slope + fits.intercept
+        ax.plot(linear_x, linear_y, color='black', linewidth=1)
+        fig.savefig("arrhenius_{}_min-angle_{}.pdf".format(self.DIR.split('/')[-1], min_angle), bbox_inches='tight')
+        df = pd.DataFrame({'Ts': Ts, 'inverse_T': inverse_T, 'ln_freq': ln_freq, 'freq': freq})
+        df.to_csv("arrhenius-data_{}_min-angle_{}.csv".format(self.DIR.split('/')[-1], min_angle))
+        return
 
 
 # %%
