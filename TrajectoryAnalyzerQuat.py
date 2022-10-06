@@ -918,18 +918,43 @@ class RotationAnalyzer:
         return rotations
     '''
 
-    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, filename=None):
+    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, filename=None, save_directory='.'):
+        import numpy.ma as ma
         '''
         parameter mode: "from_init" or "each_time"
         parameter time_per_image: how to split the long trajectory info (in ps), default = 50 ps
         parameter P_index: 'all' to plot all information, or P_index (int)
         paramter vmax: maximum degree for the colormap
         parameter filename: default None (not save)
+        parameter save_directory: default None, where to save the files
         Plot t0-dt diagram
         Functionalities to add:
         (1) split into 50 ps diagrams (250 ps simulation would end up with 5 * 50 ps diagrams)
         (2) if we know the time when rotation was detected, also plot those information here
         '''
+        def indexgenerator(total_length, each_length):
+            '''
+            total_length: total number of frames
+            each_length: number of frames for each plot
+            returns a list of dictionaries, each dictionary contains -
+            'start_frame': starting frame
+            'final_frame' : final frame
+            'length': length of the plot (different from each_length for the last plot)
+            'index': chronological index of plots
+            '''
+            returnlist = []
+            start_frame = 0
+            index = 0
+            while (start_frame<total_length):
+                if (start_frame + each_length > total_length):
+                    final_frame = total_length-1
+                else:
+                    final_frame = start_frame + each_length
+                returnlist.append({'start_frame':start_frame,'final_frame':final_frame,
+                                   'length':final_frame-start_frame,'index':index})
+                start_frame += each_length
+                index += 1
+            return returnlist
         if mode=='from_init':
             rotations = self.rotations_from_init
         elif mode=='each_time':
@@ -940,37 +965,44 @@ class RotationAnalyzer:
             if not ((P_index =='all') or (P_index==rot_index)):
                 continue
             print("Plotting {}th-index PS4".format(rot_index))
-            x = []
-            y = []
-            z = []
-            for index_i, i in enumerate(rot):
-                for index_j, j in enumerate(i):
-                    x.append(index_i*self.step_skip*self.time_step/1000)
-                    y.append(index_j*self.step_skip*self.time_step/1000)
-                    z.append(j*180/np.pi)
-            x = np.array(x)
-            y = np.array(y)
-            z = np.array(z)
-            xy = np.column_stack([x.flat, y.flat])
-            print(xy)
-            xmin, xmax, ymin, ymax = 0,max(x),0,max(y)
-            grid_x, grid_y = np.mgrid[xmin:xmax:1000j, ymin:ymax:1000j]
-            method = 'linear'
-            fig, ax = plt.subplots(figsize=(30, 30*max(y)/max(x)))
-            grid_z = scipy.interpolate.griddata(xy,z,(grid_x, grid_y), method=method, fill_value=0.2)
-            # [pcolormesh with missing values?](https://stackoverflow.com/a/31687006/395857)
-            import numpy.ma as ma
-            im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='gist_earth', vmin=0, vmax=vmax)
-            #contours=[10,20,30,40,50,60]
-            #contour_z = contours
-            #ax.contour(grid_x, grid_y, grid_z, levels=contour_z, linewidths=4, colors='black', linestyles='dashed')
-            #im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='jet', vmin=np.nanmin(grid_z), vmax=np.nanmax(grid_z))
-            fig.colorbar(im, ax=ax)
-            ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
-            ax.set_xlabel(r'$t_0$ (ps)')
-            ax.set_ylabel(r'$dt$ (ps)')
-            if filename:
-                fig.savefig(filename+'.pdf', dpi=300)
+
+            for plotpart in indexgenerator(len(rotations), time_per_image * 1000 / self.step_skip / self.time_step):
+                currentlyPlotting = rot[plotpart['start_frame']:plotpart['final_frame']]
+                x = []
+                y = []
+                z = []
+                for index_i, i in enumerate(currentlyPlotting):
+                    for index_j, j in enumerate(i):
+                        x.append(index_i*self.step_skip*self.time_step/1000)
+                        y.append(index_j*self.step_skip*self.time_step/1000)
+                        z.append(j*180/np.pi)
+                x = np.array(x)
+                y = np.array(y)
+                z = np.array(z)
+                xy = np.column_stack([x.flat, y.flat])
+                print(xy)
+                xmin, xmax, ymin, ymax = 0,max(x),0,max(y)
+                grid_x, grid_y = np.mgrid[xmin:xmax:1000j, ymin:ymax:1000j]
+                method = 'linear'
+                fig, ax = plt.subplots(figsize=(30, 30*max(y)/max(x)))
+                grid_z = scipy.interpolate.griddata(xy,z,(grid_x, grid_y), method=method) # , fill_value=0.2)
+                # [pcolormesh with missing values?](https://stackoverflow.com/a/31687006/395857)
+                im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='gist_earth', vmin=0, vmax=vmax)
+                #contours=[10,20,30,40,50,60]
+                #contour_z = contours
+                #ax.contour(grid_x, grid_y, grid_z, levels=contour_z, linewidths=4, colors='black', linestyles='dashed')
+                #im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='jet', vmin=np.nanmin(grid_z), vmax=np.nanmax(grid_z))
+                fig.colorbar(im, ax=ax)
+                ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
+                ax.set_xlabel(r'$t_0$ (ps)')
+                ax.set_ylabel(r'$dt$ (ps)')
+                if filename:
+                    fig.savefig(filename+'.pdf', bbox_inches='tight')
+                else:
+                    from datetime import datetime
+                    now = datetime.now()
+                    filename = "{}/P_{}_part_{}-{}-{}.pdf".format(save_directory, rot_index, plotpart['index'], now.strftime("%x"), now.strftime("%X"))
+                    fig.savefig(filename, bbox_inches='tight')
             return
         """
         angle = np.radians(self.rot_graph[:, 1:, 1:]) # Indices: P-site, time, angle_information
