@@ -1,16 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
 '''
-CorrelationAnalyzer
-Version: September 13nd, 2022 V0.3
+CorrelationAnalyzer for rotational motions
+Version: December 24th, 2022
 Writer: KyuJung Jun (kjun@berkeley.edu), Dr. Byungju Lee (blee89@kist.re.kr)
 '''
 
 from pymatgen.core.structure import Structure
 from pymatgen.io.vasp.outputs import Vasprun
-#from pymatgen.analysis.diffusion_analyzer import DiffusionAnalyzer
+from pymatgen.analysis.diffusion.analyzer import DiffusionAnalyzer
 from pymatgen.analysis.chemenv.coordination_environments.coordination_geometry_finder import LocalGeometryFinder, find_rotation
 from pymatgen.core.periodic_table import Element
 from pymatgen.core.sites import PeriodicSite
@@ -25,6 +24,7 @@ import pickle
 from multiprocessing import set_start_method
 import sys
 import pandas as pd
+import json
 
 
 try:
@@ -33,7 +33,25 @@ except RuntimeError:
     pass
 
 
-# In[2]:
+
+'''
+Each temperature step
+Step1: In each temperature folders (1000K, 900K, etc), run extract_graph.py
+Step2: In each temperature folders, run "python extract_all_rotations_v1.py 0"
+    - Argument 150 ps per integer (0, 1). e.g. 300 ps -> 0, 1 two times
+Step3: In each temperature folders, run "python count.py" which generates "single_dt_counter.pkl" in each temperature folders
+
+Overall step
+Step4: At the folder containing temperature folders, run "python plot_all_rotations.py", which generates pdf and tiff files
+    of all P-indices (16 in my case), split into 50 ps per each.
+
+
+
+
+
+'''
+
+
 def angle_quat(x,y):
     print("Deprecated, do not use Quaternion.sym_distance")
     '''
@@ -45,7 +63,7 @@ def angle_quat(x,y):
     for measuring rotation similarities when the samples are spread over a "solid" angle of more than pi/2 radians
     (the spread refers to quaternions as point samples on the unit hypersphere).
     '''
-    return Quaternion.sym_distance(x,y)
+    return Quaternion.absolute_distance(x,y)
 """
 def abs_angle_quat(x,y):
     return Quaternion.distance(x,y)
@@ -120,7 +138,7 @@ class HiddenPrints:
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
-'''
+
 class DA_new(DiffusionAnalyzer):
     def __init__(self, structure, displacements, specie, temperature,
                  time_step, step_skip, smoothed="max", min_obs=30,
@@ -171,7 +189,7 @@ class DA_new(DiffusionAnalyzer):
         return cls(structure, disp, specie, temperature, time_step,
                    step_skip=step_skip, lattices=l, disp_vs_time=np.array(dp_lattice), **kwargs)
 
-'''
+
 # In[4]:
 
 
@@ -506,64 +524,7 @@ class RotationAnalyzer:
             np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         
             
-    def count_rot_from_graph_from_init(self, max_time_delay=3000, n_process=None):
-        rotations=[]
-        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
-        
-        for a, atom in enumerate(self.rot_graph):
-            atom_info = []
-            with multiprocessing.Pool(processes=n_process) as p:
-                atom_info = p.starmap(self.angle_computer_init, [(index, a, num_delayed_frames) for index in range(len(atom)-num_delayed_frames)])
-                rotations.append(atom_info)
-        self.rotations_from_init = rotations
-        return rotations
 
-        '''
-        for a, atom in enumerate(self.rot_graph):
-            atom_info = []
-            with multiprocessing.Pool(processes=n_process) as p:
-                time_info = p.starmap(lambdafunc,
-                        [])
-            for frameindex, frame in enumerate(atom):
-                if frameindex >= len(atom)-num_delayed_frames:
-                    break
-                time_info = []
-
-                for i in range(num_delayed_frames):
-                    time_info.append(Quaternion.sym_distance(atom[0][1], atom[frameindex+i][1]))
-                atom_info.append(time_info)
-            rotations.append(atom_info)
-        self.rotations_from_init = rotations
-        return rotations
-        '''
-
-    def count_rot_from_graph_each_time(self, max_time_delay=3000,n_process=None):
-        '''
-        outdated, use atomwise class methods
-        max_time_delay: dt value maximum (in fs)
-        n_process: number of cpu-cores
-        '''
-        rotations = []
-        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
-
-        for a, atom in enumerate(self.rot_graph):
-            '''
-            Note, rot_graph[P_index][0] = time in fs, rot_graph[1] = Quaternion object (referenced to the start of the simulation
-            '''
-            atom_info = []
-            for frameindex, frame in enumerate(atom):
-                if frameindex >= len(atom)-num_delayed_frames:
-                    break
-                with multiprocessing.Pool(processes=n_process) as p:
-                    # atom[0][1] is this P's first snapshot's quaternion object
-                    time_info = p.starmap(angle_quat, [(atom[0][1], atom[frameindex+i][1]) for i in range(num_delayed_frames)])
-                atom_info.append(time_info)
-            rotations.append(atom_info)
-                #with multiprocessing.Pool(processes=n_process) as p:
-                #    atom_info = p.starmap(self.angle_computer_each_time, [(index, a, num_delayed_frames) for index in range(len(atom)-num_delayed_frames)])
-                #    rotations.append(atom_info)
-        self.rotations_from_init = rotations
-        return rotations
 
     def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
         '''
@@ -683,56 +644,6 @@ class RotationAnalyzer:
             atom_info.append(time_info)
         return atom_info
 
-    """
-    def count_rot_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None):
-        '''
-        max_time_delay: dt value maximum (in fs)
-        n_process: number of cpu-cores
-        '''
-        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
-        with multiprocessing.Pool(processes=n_process) as p:
-            rotations = p.starmap(self.lambda_each_time, [(i, num_delayed_frames) for i in range(len(self.rot_graph))])
-        self.rotations_each_time = rotations
-        return rotations
-
-    def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None):
-        '''
-        max_time_delay: dt value maximum (in fs)
-        n_process: number of cpu-cores
-        '''
-        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
-        with multiprocessing.Pool(processes=n_process) as p:
-            rotations = p.starmap(self.lambda_from_init, [(i, num_delayed_frames) for i in range(len(self.rot_graph))])
-        self.rotations_from_init = rotations
-        return rotations
-        """
-    def lambda_from_init(self, index, num_delayed_frames):
-        '''
-        helper function for count_rot_graph_from_init_atomwise
-        '''
-        atom_info = []
-        for frameindex, frame in enumerate(self.rot_graph[index]):
-            if frameindex >= len(self.rot_graph[0])-num_delayed_frames:
-                break
-            time_info = []
-            for i in range(num_delayed_frames):
-                time_info.append(abs_angle_quat(self.rot_graph[index][0][1], self.rot_graph[index][frameindex+i][1]))
-            atom_info.append(time_info)
-        return atom_info
-
-    def lambda_each_time(self, index, num_delayed_frames):
-        '''  
-        helper function for count_rot_graph_each_time_atomwise
-        '''
-        atom_info = []
-        for frameindex, frame in enumerate(self.rot_graph[index]):
-            if frameindex >= len(self.rot_graph[0])-num_delayed_frames:
-                break
-            time_info = []
-            for i in range(num_delayed_frames):
-                time_info.append(abs_angle_quat(self.rot_graph[index][frameindex][1], self.rot_graph[index][frameindex+i][1]))
-            atom_info.append(time_info)
-        return atom_info
 
     def count_rotations_single_dt(self, dt, min_peak_height, peak_width=None):
         '''
@@ -744,28 +655,16 @@ class RotationAnalyzer:
         assert num_dt_frames.is_integer()
         num_dt_frames = int(num_dt_frames)
         all_peaks = []
+        min_peak_height_in_rad = min_peak_height*np.pi/180
         for P_index, arr in enumerate(self.rotations_each_time):
-            peak, info = scipy.signal.find_peaks(arr, height=min_peak_height, peak_width=peak_width)
-            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights']*180/np.pi, "info":info[i]
-                          ,"P_index":P_index} for i in range(len(peak))]
+            peak, info = scipy.signal.find_peaks([i[num_dt_frames] for i in arr], height=min_peak_height_in_rad, width=peak_width)
+            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights'][i]*180/np.pi
+                            ,"P_index":P_index} for i in range(len(peak))]
             all_peaks.append(peak_dict)
-        with open('single_dt_counter.pkl', 'wb') as f:
+        with open('./single_dt_counter.pkl', 'wb') as f:
             pickle.dump(all_peaks, f)
         return all_peaks
-        '''
-        indices = []
-        for i in range(len(self.info_dict['init_structure'])):
-            if self.info_dict['init_structure'].species[i] == Element(self.species):
-                indices.append(i)
-        num_indices = len(indices)
-        starting_index = min(indices)
-        for i in all_peaks:
-            for j in i:
-                Rotation(time=j['time'],duration=info['width'], angle=j['height'],
-                         index=j['P_index'], site=self.info_dict['init_structure'][starting_index+P_index],
-                         rotation_q = , final_q = , init_q = )
 
-        '''
 
     def count_rotations_from_each_time(self, ignored_angles=15, firstmax_detector=15, min_dt=100):
         '''
@@ -920,7 +819,7 @@ class RotationAnalyzer:
         return rotations
     '''
 
-    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, filename=None, save_directory='.'):
+    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, fname=None, save_directory='.'):
         import numpy.ma as ma
         '''
         parameter mode: "from_init" or "each_time"
@@ -947,6 +846,7 @@ class RotationAnalyzer:
             returnlist = []
             start_frame = 0
             index = 0
+            each_length = int(each_length)
             while (start_frame<total_length):
                 if (start_frame + each_length > total_length):
                     final_frame = total_length-1
@@ -956,6 +856,7 @@ class RotationAnalyzer:
                                    'length':final_frame-start_frame,'index':index})
                 start_frame += each_length
                 index += 1
+            print(returnlist)
             return returnlist
         if mode=='from_init':
             rotations = self.rotations_from_init
@@ -968,7 +869,7 @@ class RotationAnalyzer:
                 continue
             print("Plotting {}th-index PS4".format(rot_index))
 
-            for plotpart in indexgenerator(len(rotations), time_per_image * 1000 / self.step_skip / self.time_step):
+            for plotpart in indexgenerator(len(rotations[0]), time_per_image * 1000 / self.step_skip / self.time_step):
                 currentlyPlotting = rot[plotpart['start_frame']:plotpart['final_frame']]
                 x = []
                 y = []
@@ -998,14 +899,17 @@ class RotationAnalyzer:
                 ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
                 ax.set_xlabel(r'$t_0$ (ps)')
                 ax.set_ylabel(r'$dt$ (ps)')
-                if filename:
-                    fig.savefig(filename+'.pdf', bbox_inches='tight')
+                if fname:
+                    fig.savefig(fname+'.pdf', bbox_inches='tight')
                 else:
                     from datetime import datetime
                     now = datetime.now()
-                    filename = "{}/P_{}_part_{}-{}-{}.pdf".format(save_directory, rot_index, plotpart['index'], now.strftime("%x"), now.strftime("%X"))
-                    fig.savefig(filename, bbox_inches='tight')
-            return
+                    filename_tiff = "{}/P_{}_part_{}_T_{}_{}.tiff".format(save_directory, rot_index, plotpart['index'], self.temperature, mode)
+                    filename_pdf = "{}/P_{}_part_{}_T_{}_{}.pdf".format(save_directory, rot_index, plotpart['index'], self.temperature, mode)
+                    fig.savefig(filename_tiff, bbox_inches='tight', dpi=300)
+                    fig.savefig(filename_pdf, bbox_inches='tight')
+
+        return
         """
         angle = np.radians(self.rot_graph[:, 1:, 1:]) # Indices: P-site, time, angle_information
         # Last index is [1:] since the 0-th component is time
@@ -1101,12 +1005,12 @@ class RotationAnalyzer:
     def angle_computer_init(self, t0_index, atom_index, num_delayed_frames):
         time_info = []
         for i in range(num_delayed_frames):
-            time_info.append(Quaternion.sym_distance(self.rot_graph[atom_index][0][1], self.rot_graph[atom_index][t0_index+i][1]))
+            time_info.append(Quaternion.absolute_distance(self.rot_graph[atom_index][0][1], self.rot_graph[atom_index][t0_index+i][1]))
         return time_info
     def angle_computer_each_time(self, t0_index, atom_index, num_delayed_frames):
         time_info = []
         for i in range(num_delayed_frames):
-            time_info.append(Quaternion.sym_distance(self.rot_graph[atom_index][t0_index][1], self.rot_graph[atom_index][t0_index+i][1]))
+            time_info.append(Quaternion.absolute_distance(self.rot_graph[atom_index][t0_index][1], self.rot_graph[atom_index][t0_index+i][1]))
         return time_info
     
     @classmethod
@@ -1197,12 +1101,27 @@ class RotationAnalyzer:
         
         return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph)
 
+
+    '''
+    To be implmemented
+    - Provide relaxed PS4 position (pymatgen structure object)
+    - There are 4! permutation of the S indices
+    - For each P, get the index of S anions
+        - Then, make 4! permutations of these S anions indices
+        - Compute angle between Quaternions, get the minimum angle among the permutations
+    - This gives the time of activated state vs ground state
+
+
+
+    '''
+
+
 class CorrelationCollection:
     def __init__(self, DIR):
         self.DIR = DIR
         self.rot_dict_list = []
 
-    def read_rot_objects(self, exclude=None):
+    def read_rot_objects(self, exclude=[]):
         '''
         Using the directory information (self.DIR), read all of the RotationAnalyzer objects
         and make initial list for self.rot_dict
@@ -1259,15 +1178,27 @@ class CorrelationCollection:
         ax.scatter(inverse_T, ln_freq)
 
         ax.set_xlabel("1000/T (1/K)")
-        ax.set_ylabel(r"$Rotations per ps per PS_4 (1/ps/n_{P})$")
+        ax.set_ylabel(r"Rotations per ps per $\rm PS_4$ (1/ps/$\rm n_{P}$)")
         fits = scipy.stats.linregress(inverse_T, ln_freq)
-        print("Activation energy : {} eV".format(-1 * fits.slope * 8.617E-5 * 1000))
+        Ea = -1 * fits.slope * 8.617E-5 * 1000
+        print("Activation energy : {} eV".format(Ea))
         linear_x = np.linspace(min(inverse_T), max(inverse_T), 100)
-        linear_y = np.linspace * fits.slope + fits.intercept
+        linear_y = linear_x * fits.slope + fits.intercept
+        rt_x = 1000/300
+        rt_y = np.exp(rt_x * fits.slope + fits.intercept)
         ax.plot(linear_x, linear_y, color='black', linewidth=1)
-        fig.savefig("arrhenius_{}_min-angle_{}.pdf".format(self.DIR.split('/')[-1], min_angle), bbox_inches='tight')
-        df = pd.DataFrame({'Ts': Ts, 'inverse_T': inverse_T, 'ln_freq': ln_freq, 'freq': freq})
-        df.to_csv("arrhenius-data_{}_min-angle_{}.csv".format(self.DIR.split('/')[-1], min_angle))
+        DIR_NAME = self.DIR.split('/')[-1]
+        if len(DIR_NAME) == 0:
+            DIR_NAME = self.DIR.split('/')[-2]
+        fig.savefig("arrhenius_{}_min-angle_{}.pdf".format(DIR_NAME, min_angle), bbox_inches='tight')
+        resultdict = {'Ts': Ts, 'inverse_T': inverse_T, 'ln_freq': ln_freq, 'freq': freq
+                    , 'Ea':Ea, 'R2':fits.rvalue**2, 'slope':fits.slope, 'intercept':fits.intercept
+                    , 'RT_freq':rt_y}
+        with open("arrhenius_fitresult_{}_min-angle_{}.json".format(DIR_NAME, min_angle), 'w') as outfile:
+            json.dump(resultdict, outfile, indent=4)
+        df = pd.DataFrame(resultdict)
+
+        df.to_csv("arrhenius-data_{}_min-angle_{}.csv".format(DIR_NAME, min_angle))
         return
 
 
