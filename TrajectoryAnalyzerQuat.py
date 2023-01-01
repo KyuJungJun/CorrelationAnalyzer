@@ -9,7 +9,7 @@ Writer: KyuJung Jun (kjun@berkeley.edu), Dr. Byungju Lee (blee89@kist.re.kr)
 
 from pymatgen.core.structure import Structure
 from pymatgen.io.vasp.outputs import Vasprun
-from pymatgen.analysis.diffusion.analyzer import DiffusionAnalyzer
+#from pymatgen.analysis.diffusion.analyzer import DiffusionAnalyzer
 from pymatgen.analysis.chemenv.coordination_environments.coordination_geometry_finder import LocalGeometryFinder, find_rotation
 from pymatgen.core.periodic_table import Element
 from pymatgen.core.sites import PeriodicSite
@@ -51,7 +51,10 @@ Step4: At the folder containing temperature folders, run "python plot_all_rotati
 
 '''
 
-
+def calc_distance(x, y):
+    print("Calc distance x: {}".format(x))
+    print("Calc distance y: {}".format(y))
+    return np.linalg.norm(x-y,ord=None)
 def angle_quat(x,y):
     print("Deprecated, do not use Quaternion.sym_distance")
     '''
@@ -138,7 +141,7 @@ class HiddenPrints:
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
-
+"""
 class DA_new(DiffusionAnalyzer):
     def __init__(self, structure, displacements, specie, temperature,
                  time_step, step_skip, smoothed="max", min_obs=30,
@@ -188,7 +191,7 @@ class DA_new(DiffusionAnalyzer):
 
         return cls(structure, disp, specie, temperature, time_step,
                    step_skip=step_skip, lattices=l, disp_vs_time=np.array(dp_lattice), **kwargs)
-
+"""
 
 # In[4]:
 
@@ -202,21 +205,21 @@ class Hop:
         self.ini_site = copy.copy(self.fin_site)
         self.ini_site.coords = self.ini_site.coords - self.vector
         self.threshold_length = hopping_length
-        
+"""       
+'''
 class HHCorrelation:
     def __init__(self, Hop1, Hop2, time_scale, length_scale):
         self.indice = [Hop1.index, Hop2.index]
         self.time_scale = time_scale
         self.length_scale = length_scale
         self.timestep = abs(Hop1.time - Hop2.time)
-        
-#         if Hop1.time <= Hop2.time:
-#             self.distance = Hop1.fin_site.distance(Hop2.ini_site)
-#         else:
-#             self.distance = Hop1.ini_site.distance(Hop2.fin_site)
+        # if Hop1.time <= Hop2.time:
+        # self.distance = Hop1.fin_site.distance(Hop2.ini_site)
+        # else:
+        # self.distance = Hop1.ini_site.distance(Hop2.fin_site)
         self.distance = np.average([Hop1.ini_site.distance(Hop2.ini_site), Hop1.fin_site.distance(Hop2.fin_site)])
         self.angle = angle_two_vector(Hop1.vector, Hop2.vector)
-        
+'''        
               
 class HoppingAnalyzer: 
     def __init__(self, structures, species, temperature, step_skip=10, time_step=2, hopping_length=3, text_input=None):
@@ -320,7 +323,7 @@ class HoppingAnalyzer:
                 del temp_str
                 
         return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, hopping_length=hopping_length)
-
+"""
     
 class Rotation:
     def __init__(self, time, duration, angle, index, site, rotation_q, final_q, init_q):
@@ -344,7 +347,403 @@ class RHCorrelation:
         else:
             self.distance = Rotation.site.distance(Hop.fin_site)
         
+# Implementing: 2022 12-30
+class HopAnalyzer:
+    def __init__(self, structures, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None, hop_from_init=None, hop_each_time=None, info_dict=None):
+        self.species = Element(species)
+        self.temperature = temperature
+        self.step_skip = step_skip
+        self.time_step = time_step
+        self.structures = structures
+        self.neighbor_sets_matrix = []
+        self.hop_graph = []  
+        self.centers = []
+        self.hop_from_init = hop_from_init
+        self.hop_each_time = hop_each_time
+        self.info_dict = info_dict
+        self.split = None
+        self.part_index = None
+        self.structures = structures
+        start_time = 0 
+        if not info_dict:
+            MODE = 'SCRATCH'
+        elif info_dict['part_index']=='hop_graph_read':
+            MODE = 'GRAPH_READ'
+        elif info_dict['part_index']=='combined':
+            MODE = 'COMBINED'
+        if (not info_dict):
+            '''
+            Determine Either starting from scratch, or starting from an archived hop graph information
+            This case: we have no info_dict, so we start from scratch
+            '''
+            print("Starting the analysis from scratch")
+            # count the number of species
+            indices = []
+            for i in range(len(structures[0])):
+                if structures[0].species[i] == Element(species):
+                    indices.append(i)
+                    self.centers.append(structures[0][i])
+            num_indices = len(indices)
+            starting_index = min(indices)
+            print('The number of {} atoms: {}' .format(self.species, num_indices))
+
+            initial_structure = structures[0]
+            p, l = [], []
+            # p  : fractional coordinate of each atoms
+            # l  : lattice matrix
+            # dp : displacement (change in fractional coordinates)
+            # dp_lattice : lattice matrix * dp -> displacement in cartesian coordinates
+            # f_disp : fractional cumsum
+            for i, s in enumerate(structures):
+                if i == 0:
+                    structure = s
+                p.append(np.array(s.frac_coords)[:, None])
+                l.append(s.lattice.matrix)
+            if initial_structure is not None:
+                p.insert(0, np.array(initial_structure.frac_coords)[:, None])
+                l.insert(0, initial_structure.lattice.matrix)
+            else:
+                p.insert(0, p[0])
+                l.insert(0, l[0])
+
+            p = np.concatenate(p, axis=1)
+
+            dp = p[:, 1:] - p[:, :-1]
+            dp = dp - np.round(dp) # this takes care of periodic boundary conditions
+            dp_lattice = []
+            for i in dp:
+                dp_lattice.append([np.dot(d, m) for d, m in zip(i, l[1:])])
+            f_disp = np.cumsum(dp, axis=1)
+            c_disp = []
+            for i in f_disp:
+                c_disp.append([np.dot(d, m) for d, m in zip(i, l[1:])])
+            disp = np.array(c_disp)
+
+            # If is NVT-AIMD, clear lattice data.
+            if np.array_equal(l[0], l[-1]):
+                l = np.array([l[0]])
+            else:
+                l = np.array(l)
+            #if initial_disp is not None:
+            #    disp += initial_disp[:, None, :]
+
+            # return cls(structure, disp, species, temperature, time_step,
+            #           step_skip=step_skip, lattices=l, disp_vs_time=np.array(dp_lattice), **kwargs)
+            print(len(c_disp))
+            self.hop_graph = [i for index, i in enumerate(c_disp) if index in indices]
+            print(len(self.hop_graph))
+            print('Hop information successfully archived')
+            self.info_dict = {}
+            #self.info_dict['structures']=self.structures
+            self.info_dict['time_step']=self.time_step
+            self.info_dict['step_skip']=self.step_skip
+            self.info_dict['temperature']=self.temperature
+            self.info_dict['species']=self.species
+            self.info_dict['centers']=self.centers
+            self.info_dict['neighbor_sets_matrix']=self.neighbor_sets_matrix
+            self.info_dict['split'] = self.split
+            self.info_dict['part_index'] = self.part_index
+            self.info_dict['init_structure'] = structures[0]
+
+
+
+    def export_hop_analysis(self, DIR):
+        with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
+            pickle.dump(self.info_dict, f)
+        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+            pickle.dump(self.structures, f)
+        if self.part_index==None:
+            if not len(self.rotations_each_time) == 0:
+                np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
+            if not len(self.rotations_from_init) == 0:
+                np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
+            #if not len(self.rot_graph) == 0:
+            #    np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
+        if self.part_index != None:
+            if len(self.rotations_each_time) != 0:
+                np.save("{}/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
+            if len(self.rotations_from_init) != 0:
+                np.save("{}/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
+            #if len(self.rot_graph) != 0:
+            #    np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
+
+
+    def count_hop_from_graph_each_time_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
+        '''
+        max_time_delay: dt value maximum (in fs)
+        n_process: number of cpu-cores
+        split: for each multiprocessing rounds, how many frames you want to split. i.e. 1000 steps = 10 step_skip*2 time_step = 20 ps
+        rotations object: [P-index, frames]
+        Memory to handle within the multiprocessing becomes excessive if you make the Pool handle too many trajectories.
+        Therefore, we split into "split" number of trajectories each time to analyze.
+        '''
+        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
+        print(num_delayed_frames)
+        hop_list = []
+        start_index = 0
+        split_index = 0
+        self.split = split
+        self.part_index = part_index
+        with multiprocessing.Pool(processes=n_process) as p:
+            while (start_index < len(self.hop_graph[0])-num_delayed_frames):
+                if (part_index == None) or (part_index == split_index):
+                    print('Starmap launching now for each_time analysis')
+                    hop_add = p.starmap(self.lambda_each_time_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.hop_graph))])
+                    hop_list.append(np.array(hop_add))
+                if split_index == part_index:
+                    break
+                start_index += split
+                split_index += 1
+                #p.close()
+
+        #for i in rotation_list:
+        #    print(i.shape)
+        if len(hop_list)==0:
+            self.hops_each_time=np.array([])
+            return []
+        else:
+            hops = np.concatenate([i for i in hop_list], axis=1)
+            #print(rotations.shape)
+            self.hops_each_time = hops
+            return hops
+
+
+    def lambda_each_time_split(self, index, num_delayed_frames, start_index, split):
+        '''
+        helper function for count_rot_graph_from_init_atomwise
+        '''
+        atom_info = []
+        for frameindex, frame in enumerate(self.hop_graph[index]):
+            if frameindex<start_index: continue
+                # Setting the start condition for this split analysis
+            if frameindex >= len(self.hop_graph[0])-num_delayed_frames:
+                break
+                # If it is the end of the entire trajectory, finish it here!
+            if frameindex >= start_index+split:
+                break
+                # End of the split, end here
+            time_info = []
+            for i in range(num_delayed_frames):
+                print(self.hop_graph[index][frameindex])
+                print(self.hop_graph[index][frameindex+i])
+                print(index, frameindex, i)
+                time_info.append(calc_distance(self.hop_graph[index][frameindex], self.hop_graph[index][frameindex+i]))
+            atom_info.append(time_info)
+        return atom_info
+
+
+    def plot_hops(self, mode, time_per_image=50, P_index='all',vmax=6, fname=None, save_directory='.'):
+        import numpy.ma as ma
+        '''
+        parameter mode: "from_init" or "each_time"
+        parameter time_per_image: how to split the long trajectory info (in ps), default = 50 ps
+        parameter P_index: 'all' to plot all information, or P_index (int)
+        paramter vmax: maximum degree for the colormap
+        parameter filename: default None (not save)
+        parameter save_directory: default None, where to save the files
+        Plot t0-dt diagram
+        Functionalities to add:
+        (1) split into 50 ps diagrams (250 ps simulation would end up with 5 * 50 ps diagrams)
+        (2) if we know the time when rotation was detected, also plot those information here
+        '''
+        def indexgenerator(total_length, each_length):
+            '''
+            total_length: total number of frames
+            each_length: number of frames for each plot
+            returns a list of dictionaries, each dictionary contains -
+            'start_frame': starting frame
+            'final_frame' : final frame
+            'length': length of the plot (different from each_length for the last plot)
+            'index': chronological index of plots
+            '''
+            returnlist = []
+            start_frame = 0
+            index = 0
+            each_length = int(each_length)
+            while (start_frame<total_length):
+                if (start_frame + each_length > total_length):
+                    final_frame = total_length-1
+                else:
+                    final_frame = start_frame + each_length
+                returnlist.append({'start_frame':start_frame,'final_frame':final_frame,
+                                   'length':final_frame-start_frame,'index':index})
+                start_frame += each_length
+                index += 1
+            print(returnlist)
+            return returnlist
+        if mode=='hop_from_init':
+            hops = self.hop_from_init
+        elif mode=='hop_each_time':
+            hops = self.hop_each_time
+        else:
+            print('Wrong mode, please double check')
+        for hop_index, hop in enumerate(hops):
+            if not ((P_index =='all') or (P_index==hop_index)):
+                continue
+            print("Plotting {}th-index PS4".format(hop_index))
+
+            for plotpart in indexgenerator(len(hops[0]), time_per_image * 1000 / self.step_skip / self.time_step):
+                currentlyPlotting = hop[plotpart['start_frame']:plotpart['final_frame']]
+                x = []
+                y = []
+                z = []
+                for index_i, i in enumerate(currentlyPlotting):
+                    for index_j, j in enumerate(i):
+                        x.append(index_i*self.step_skip*self.time_step/1000)
+                        y.append(index_j*self.step_skip*self.time_step/1000)
+                        z.append(j*180/np.pi)
+                x = np.array(x)
+                y = np.array(y)
+                z = np.array(z)
+                xy = np.column_stack([x.flat, y.flat])
+                print(xy)
+                xmin, xmax, ymin, ymax = 0,max(x),0,max(y)
+                grid_x, grid_y = np.mgrid[xmin:xmax:1000j, ymin:ymax:1000j]
+                method = 'linear'
+                fig, ax = plt.subplots(figsize=(30, 30*max(y)/max(x)))
+                grid_z = scipy.interpolate.griddata(xy,z,(grid_x, grid_y), method=method) # , fill_value=0.2)
+                # [pcolormesh with missing values?](https://stackoverflow.com/a/31687006/395857)
+                im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='gist_earth', vmin=0, vmax=vmax)
+                #contours=[10,20,30,40,50,60]
+                #contour_z = contours
+                #ax.contour(grid_x, grid_y, grid_z, levels=contour_z, linewidths=4, colors='black', linestyles='dashed')
+                #im = ax.pcolormesh(grid_x, grid_y, ma.masked_invalid(grid_z), cmap='jet', vmin=np.nanmin(grid_z), vmax=np.nanmax(grid_z))
+                fig.colorbar(im, ax=ax)
+                ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
+                ax.set_xlabel(r'$t_0$ (ps)')
+                ax.set_ylabel(r'$dt$ (ps)')
+                if fname:
+                    fig.savefig(fname+'.pdf', bbox_inches='tight')
+                else:
+                    from datetime import datetime
+                    now = datetime.now()
+                    filename_tiff = "{}/P_{}_part_{}_T_{}_{}.tiff".format(save_directory, hop_index, plotpart['index'], self.temperature, mode)
+                    filename_pdf = "{}/P_{}_part_{}_T_{}_{}.pdf".format(save_directory, hop_index, plotpart['index'], self.temperature, mode)
+                    fig.savefig(filename_tiff, bbox_inches='tight', dpi=300)
+                    #fig.savefig(filename_pdf, bbox_inches='tight')
+        return
+
+
+    def count_hops_single_dt(self, dt, min_peak_height, peak_width=None):
+        '''
+        parameter dt: dt scan (in fs), use default = 1000 fs, corresponding to 1 THz phonon frequency
+        min_peak_height: minimum peak height parameter for scipy.signal.find_peaks, in Angstrom
+        peak_width: min peak width for scipy.signal.find_peaks, default set to none
+        '''
+        num_dt_frames = dt/self.step_skip/self.time_step
+        assert num_dt_frames.is_integer()
+        num_dt_frames = int(num_dt_frames)
+        all_peaks = []
+        min_peak_height_in_angstrom = min_peak_height
+        for P_index, arr in enumerate(self.hop_each_time):
+            peak, info = scipy.signal.find_peaks([i[num_dt_frames] for i in arr], height=min_peak_height_in_angstrom, width=peak_width)
+            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights'][i]*180/np.pi
+                            ,"P_index":P_index} for i in range(len(peak))]
+            all_peaks.append(peak_dict)
+        with open('./hop_single_dt_counter.pkl', 'wb') as f:
+            pickle.dump(all_peaks, f)
+        return all_peaks
+
+
+
+    '''
+    @classmethod
+    def from_txt(cls, DIR, species, temperature):
+        try:
+            text_rot_list = []
+            with open(DIR, 'r') as g:
+                lines = g.readlines()
+                text_rot_list = json.loads(lines[0].replace('nan', 'NaN'))
+                text_center_list = json.loads(lines[1].replace("'", '"'))
+
+            return cls(None, species, temperature, text_input=[np.array(text_rot_list), [PeriodicSite.from_dict(x) for x in text_center_list]])
+                    
+        except(IndexError):
+            print('Text input file is not valid !!')
+    '''
+    @classmethod
+    def from_npys(cls, DIR):
+        print('Reading single npy file')
+        hop_graph = np.load("{}/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
+        hop_from_init = np.load("{}/out_{}.npy".format(DIR, "hop_from_init"), allow_pickle=True)
+        hop_each_time = np.load("{}/out_hop_{}.npy".format(DIR, "hop_each_time"), allow_pickle=True)
+        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            info_dict = pickle.load(f)
+        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,each_time=hop_each_time, hop_graph=hop_graph)
+
+    @classmethod
+    def from_many_npys(cls, DIR, read_structures=False):
+        print('Reading multiple npy files and concatenating them')
+        '''
+        Read multiple npy files to make a combined class!
+        '''
+        def read_output(type_output, DIR, split=False):
+            '''
+            Helper function to read multiple split output files (npy files)
+            '''
+            path = [x for x in os.listdir(DIR) if x.startswith('out_{}'.format(type_output))]
+            path.sort()
+            if split:
+                path = [x for x in path if x.split('_')[-1][:3].isdigit() ]
+            full_paths = ['{}/{}' .format(DIR, x) for x in path]
+            result_lists = [np.load(i, allow_pickle=True) for i in full_paths]
+            result_combined = np.concatenate(result_lists,axis=1)
+            return result_combined
+        print("Reading rot_graph")
+        rot_graph = read_output('rot_graph',DIR)
+        print("Reading from_init")
+        hop_from_init = read_output('from_init', DIR, split=True)
+        print("Reading each_time")
+        hop_each_time = read_output('each_time', DIR, split=True)
+        print("Reading info_dict")
+        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            info_dict = pickle.load(f)
+        info_dict['part_index']='combined'
+        if read_structures:
+            print("Reading structures")
+            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+                structures = pickle.load(f)
+        else:
+            structures = None
+        print("HopAnalyzer ready")
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,hop_each_time=hop_each_time, hop_graph=hop_graph)
+
+    @classmethod
+    def from_hop_graph(cls, DIR, read_structures=False):
+        print('Reading pre-analyzed hop_graph')
+        hop_graph = np.load("{}/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
+        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+            info_dict = pickle.load(f)
+        info_dict['part_index']='hop_graph_read'
+        if read_structures:
+            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+                structures = pickle.load(f)
+        else:
+            structures = None
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=None, hop_each_time=None, hop_graph=hop_graph)
+
     
+    @classmethod
+    def from_paths(cls, paths, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None):
+        print('Reading structures from list of paths')
+        strs = []
+        for x in paths:
+            if os.path.exists('{}/vasprun.xml' .format(x)):   
+                temp_str = Vasprun('{}/vasprun.xml' .format(x), ionic_step_skip=step_skip, exception_on_bad_xml=False, parse_potcar_file=False).structures
+                strs += temp_str
+                del temp_str
+        
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, hop_graph=hop_graph)
+
+
+
+
+
+
+
+
+
+
 class RotationAnalyzer:
     def __init__(self, structures, species, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None, from_init=None, each_time=None, info_dict=None):
         self.species = Element(species)
@@ -361,7 +760,6 @@ class RotationAnalyzer:
         self.split = None
         self.part_index = None
         self.structures = structures
-
         start_time = 0 
         '''
         start_time : Seems like Byungju made it to continue adding new trajectories. At this moment, disable this.
