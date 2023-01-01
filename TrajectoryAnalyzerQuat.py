@@ -52,8 +52,9 @@ Step4: At the folder containing temperature folders, run "python plot_all_rotati
 '''
 
 def calc_distance(x, y):
-    print("Calc distance x: {}".format(x))
-    print("Calc distance y: {}".format(y))
+    '''
+    x, y : numpy array in cartesian coordinates
+    '''
     return np.linalg.norm(x-y,ord=None)
 def angle_quat(x,y):
     print("Deprecated, do not use Quaternion.sym_distance")
@@ -74,7 +75,7 @@ def abs_angle_quat(x,y):
 """
 def abs_angle_quat(x,y):
     '''
-    x, y: PyQuaternion objects
+    x, y : PyQuaternion objects
     returns the angle in radians
     Note: This function does not measure the distance on the hypersphere,
     but it takes into account the fact that q and -q encode the same rotation.
@@ -349,7 +350,7 @@ class RHCorrelation:
         
 # Implementing: 2022 12-30
 class HopAnalyzer:
-    def __init__(self, structures, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None, hop_from_init=None, hop_each_time=None, info_dict=None):
+    def __init__(self, structures, species, temperature, base, step_skip=10, time_step=2, n_process=None, hop_graph=None, hop_from_init=None, hop_each_time=None, info_dict=None):
         self.species = Element(species)
         self.temperature = temperature
         self.step_skip = step_skip
@@ -364,6 +365,7 @@ class HopAnalyzer:
         self.split = None
         self.part_index = None
         self.structures = structures
+        self.base=base
         start_time = 0 
         if not info_dict:
             MODE = 'SCRATCH'
@@ -447,23 +449,24 @@ class HopAnalyzer:
 
 
 
-    def export_hop_analysis(self, DIR):
-        with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
+    def export_hop_analysis(self):
+        DIR = self.base
+        with open('{}/hop/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
-        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+        with open('{}/hop/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
             pickle.dump(self.structures, f)
         if self.part_index==None:
-            if not len(self.rotations_each_time) == 0:
-                np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
-            if not len(self.rotations_from_init) == 0:
-                np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
+            if isinstance(self.hop_each_time, np.ndarray) and len(self.hop_each_time):
+                np.save("{}/hop/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
+            if isinstance(self.hop_from_init, np.ndarray) and len(self.hop_from_init):
+                np.save("{}/hop/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
             #if not len(self.rot_graph) == 0:
             #    np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         if self.part_index != None:
-            if len(self.rotations_each_time) != 0:
-                np.save("{}/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
-            if len(self.rotations_from_init) != 0:
-                np.save("{}/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
+            if isinstance(self.hop_each_time, np.ndarray) and len(self.hop_each_time):
+                np.save("{}/hop/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.hop_each_time), allow_pickle=True)
+            if isinstance(self.hop_from_init, np.ndarray) and len(self.hop_from_init):
+                np.save("{}/hop/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.hop_from_init), allow_pickle=True)
             #if len(self.rot_graph) != 0:
             #    np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
 
@@ -478,7 +481,6 @@ class HopAnalyzer:
         Therefore, we split into "split" number of trajectories each time to analyze.
         '''
         num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
-        print(num_delayed_frames)
         hop_list = []
         start_index = 0
         split_index = 0
@@ -499,14 +501,51 @@ class HopAnalyzer:
         #for i in rotation_list:
         #    print(i.shape)
         if len(hop_list)==0:
-            self.hops_each_time=np.array([])
+            self.hop_each_time=np.array([])
             return []
         else:
             hops = np.concatenate([i for i in hop_list], axis=1)
             #print(rotations.shape)
-            self.hops_each_time = hops
+            self.hop_each_time = hops
             return hops
 
+
+    def count_hop_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
+        '''
+        max_time_delay: dt value maximum (in fs)
+        n_process: number of cpu-cores
+        split: for each multiprocessing rounds, how many frames you want to split. i.e. 1000 steps = 10 step_skip*2 time_step = 20 ps
+        rotations object: [P-index, frames]
+        Memory to handle within the multiprocessing becomes excessive if you make the Pool handle too many trajectories.
+        Therefore, we split into "split" number of trajectories each time to analyze.
+        '''
+        num_delayed_frames = int(max_time_delay/self.step_skip/self.time_step)
+        hop_list = []
+        start_index = 0
+        split_index = 0
+        self.split = split
+        self.part_index = part_index
+        with multiprocessing.Pool(processes=n_process) as p:
+            while (start_index < len(self.hop_graph[0])-num_delayed_frames):
+                if (part_index == None) or (part_index == split_index):
+                    print('Starmap launching now for from_init analysis')
+                    hop_add = p.starmap(self.lambda_from_init_split, [(i, num_delayed_frames, start_index, split) for i in range(len(self.hop_graph))])
+                    hop_list.append(np.array(hop_add))
+                if split_index == part_index:
+                    break
+                start_index += split
+                split_index += 1
+                #p.close()
+        #for i in rotation_list:
+        #    print(i.shape)
+        if len(hop_list)==0:
+            self.hop_from_init=np.array([])
+            return []
+        else:
+            hops = np.concatenate([i for i in rotation_list], axis=1)
+            #print(rotations.shape)
+            self.hop_from_init = hops
+            return hops
 
     def lambda_each_time_split(self, index, num_delayed_frames, start_index, split):
         '''
@@ -524,20 +563,40 @@ class HopAnalyzer:
                 # End of the split, end here
             time_info = []
             for i in range(num_delayed_frames):
-                print(self.hop_graph[index][frameindex])
-                print(self.hop_graph[index][frameindex+i])
-                print(index, frameindex, i)
+                #print(self.hop_graph[index][frameindex])
+                #print(self.hop_graph[index][frameindex+i])
+                #print(index, frameindex, i)
                 time_info.append(calc_distance(self.hop_graph[index][frameindex], self.hop_graph[index][frameindex+i]))
             atom_info.append(time_info)
         return atom_info
 
 
-    def plot_hops(self, mode, time_per_image=50, P_index='all',vmax=6, fname=None, save_directory='.'):
+    def lambda_from_init_split(self, index, num_delayed_frames, start_index, split):
+        '''
+        helper function for count_rot_graph_from_init_atomwise
+        '''
+        atom_info = []
+        for frameindex, frame in enumerate(self.hop_graph[index]):
+            if frameindex<start_index: continue
+                # Setting the start condition for this split analysis
+            if frameindex >= len(self.hop_graph[0])-num_delayed_frames:
+                break
+                # If it is the end of the entire trajectory, finish it here!
+            if frameindex >= start_index+split:
+                break
+                # End of the split, end here
+            time_info = []
+            for i in range(num_delayed_frames):
+                time_info.append(calc_distance(self.hop_graph[index][0], self.hop_graph[index][frameindex+i]))
+            atom_info.append(time_info)
+        return atom_info
+
+    def plot_hops(self, mode, time_per_image=50, target_index='all',vmax=6, fname=None, save_directory='.'):
         import numpy.ma as ma
         '''
         parameter mode: "from_init" or "each_time"
         parameter time_per_image: how to split the long trajectory info (in ps), default = 50 ps
-        parameter P_index: 'all' to plot all information, or P_index (int)
+        parameter target_index: 'all' to plot all information, or P_index (int)
         paramter vmax: maximum degree for the colormap
         parameter filename: default None (not save)
         parameter save_directory: default None, where to save the files
@@ -578,9 +637,9 @@ class HopAnalyzer:
         else:
             print('Wrong mode, please double check')
         for hop_index, hop in enumerate(hops):
-            if not ((P_index =='all') or (P_index==hop_index)):
+            if not ((target_index =='all') or (target_index==hop_index)):
                 continue
-            print("Plotting {}th-index PS4".format(hop_index))
+            print("Plotting {}th-index {}".format(hop_index, self.species))
 
             for plotpart in indexgenerator(len(hops[0]), time_per_image * 1000 / self.step_skip / self.time_step):
                 currentlyPlotting = hop[plotpart['start_frame']:plotpart['final_frame']]
@@ -591,7 +650,7 @@ class HopAnalyzer:
                     for index_j, j in enumerate(i):
                         x.append(index_i*self.step_skip*self.time_step/1000)
                         y.append(index_j*self.step_skip*self.time_step/1000)
-                        z.append(j*180/np.pi)
+                        z.append(j)#*180/np.pi)
                 x = np.array(x)
                 y = np.array(y)
                 z = np.array(z)
@@ -612,13 +671,14 @@ class HopAnalyzer:
                 ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
                 ax.set_xlabel(r'$t_0$ (ps)')
                 ax.set_ylabel(r'$dt$ (ps)')
+                temp = str(int(self.temperature))+"K"
+                #os.makedirs("{}/{}/hop".format(save_directory, temp), exist_ok=True)
                 if fname:
                     fig.savefig(fname+'.pdf', bbox_inches='tight')
                 else:
                     from datetime import datetime
-                    now = datetime.now()
-                    filename_tiff = "{}/P_{}_part_{}_T_{}_{}.tiff".format(save_directory, hop_index, plotpart['index'], self.temperature, mode)
-                    filename_pdf = "{}/P_{}_part_{}_T_{}_{}.pdf".format(save_directory, hop_index, plotpart['index'], self.temperature, mode)
+                    filename_tiff = "{}/hop/{}_{}_part_{}_T_{}_{}.tiff".format(self.base, temp, self.species, hop_index, plotpart['index'], self.temperature, mode)
+                    filename_pdf = "{}/hop/{}_{}_part_{}_T_{}_{}.pdf".format(self.base, temp, self.species, hop_index, plotpart['index'], self.temperature, mode)
                     fig.savefig(filename_tiff, bbox_inches='tight', dpi=300)
                     #fig.savefig(filename_pdf, bbox_inches='tight')
         return
@@ -635,12 +695,13 @@ class HopAnalyzer:
         num_dt_frames = int(num_dt_frames)
         all_peaks = []
         min_peak_height_in_angstrom = min_peak_height
-        for P_index, arr in enumerate(self.hop_each_time):
+        for Li_index, arr in enumerate(self.hop_each_time):
             peak, info = scipy.signal.find_peaks([i[num_dt_frames] for i in arr], height=min_peak_height_in_angstrom, width=peak_width)
-            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights'][i]*180/np.pi
-                            ,"P_index":P_index} for i in range(len(peak))]
+            peak_dict = [{"time":peak[i]*self.step_skip*self.time_step, "height":info['peak_heights'][i]
+                            ,"{}_index".format(self.species):Li_index} for i in range(len(peak))]
             all_peaks.append(peak_dict)
-        with open('./hop_single_dt_counter.pkl', 'wb') as f:
+        #os.makedirs("hop", exist_ok=True)
+        with open('{}/hop/hop_single_dt_{}_counter.pkl'.format(self.base, min_peak_height), 'wb') as f:
             pickle.dump(all_peaks, f)
         return all_peaks
 
@@ -664,12 +725,12 @@ class HopAnalyzer:
     @classmethod
     def from_npys(cls, DIR):
         print('Reading single npy file')
-        hop_graph = np.load("{}/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
-        hop_from_init = np.load("{}/out_{}.npy".format(DIR, "hop_from_init"), allow_pickle=True)
-        hop_each_time = np.load("{}/out_hop_{}.npy".format(DIR, "hop_each_time"), allow_pickle=True)
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        hop_graph = np.load("{}/hop/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
+        hop_from_init = np.load("{}/hop/out_{}.npy".format(DIR, "hop_from_init"), allow_pickle=True)
+        hop_each_time = np.load("{}/hop/out_hop_{}.npy".format(DIR, "hop_each_time"), allow_pickle=True)
+        with open('{}/hop/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
-        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,each_time=hop_each_time, hop_graph=hop_graph)
+        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,each_time=hop_each_time, hop_graph=hop_graph, base=DIR)
 
     @classmethod
     def from_many_npys(cls, DIR, read_structures=False):
@@ -690,42 +751,44 @@ class HopAnalyzer:
             result_combined = np.concatenate(result_lists,axis=1)
             return result_combined
         print("Reading rot_graph")
-        rot_graph = read_output('rot_graph',DIR)
+        rot_graph = read_output('rot_graph', DIR+"/hop")
         print("Reading from_init")
-        hop_from_init = read_output('from_init', DIR, split=True)
+        hop_from_init = read_output('from_init', DIR+"/hop", split=True)
         print("Reading each_time")
-        hop_each_time = read_output('each_time', DIR, split=True)
+        hop_each_time = read_output('each_time', DIR+"/hop", split=True)
         print("Reading info_dict")
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        with open('{}/hop/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='combined'
         if read_structures:
             print("Reading structures")
-            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+            with open('{}/hop/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
                 structures = pickle.load(f)
         else:
             structures = None
         print("HopAnalyzer ready")
-        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,hop_each_time=hop_each_time, hop_graph=hop_graph)
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=hop_from_init,hop_each_time=hop_each_time, hop_graph=hop_graph, base=DIR)
 
     @classmethod
     def from_hop_graph(cls, DIR, read_structures=False):
         print('Reading pre-analyzed hop_graph')
-        hop_graph = np.load("{}/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        hop_graph = np.load("{}/hop/out_{}.npy".format(DIR, "hop_graph"), allow_pickle=True)
+        with open('{}/hop/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='hop_graph_read'
         if read_structures:
-            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+            with open('{}/hop/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
                 structures = pickle.load(f)
         else:
             structures = None
-        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=None, hop_each_time=None, hop_graph=hop_graph)
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, hop_from_init=None, hop_each_time=None, hop_graph=hop_graph, base=DIR)
 
     
     @classmethod
     def from_paths(cls, paths, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None):
         print('Reading structures from list of paths')
+        base = "/".join(paths[0].split("/")[:-1])
+        os.makedirs("{}/hop".format(base), exist_ok=True)
         strs = []
         for x in paths:
             if os.path.exists('{}/vasprun.xml' .format(x)):   
@@ -733,19 +796,29 @@ class HopAnalyzer:
                 strs += temp_str
                 del temp_str
         
-        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, hop_graph=hop_graph)
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, hop_graph=hop_graph, base=base)
 
-
-
-
-
-
-
+    @classmethod
+    def from_base(cls, base, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None):
+        print('Reading structures from a base directory')
+        os.makedirs("{}/hop".format(base), exist_ok=True)
+        path = [x for x in os.listdir(base) if x.startswith('run')]
+        path.sort()
+        full_paths = ['{}/{}' .format(base, x) for x in path]
+        full_paths = full_paths
+        strs = []
+        for x in full_paths:
+            if os.path.exists('{}/vasprun.xml' .format(x)):   
+                temp_str = Vasprun('{}/vasprun.xml' .format(x), ionic_step_skip=step_skip, exception_on_bad_xml=False, parse_potcar_file=False).structures
+                strs += temp_str
+                del temp_str
+        
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, hop_graph=hop_graph, base=base)
 
 
 
 class RotationAnalyzer:
-    def __init__(self, structures, species, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None, from_init=None, each_time=None, info_dict=None):
+    def __init__(self, structures, species, temperature, base, step_skip=10, time_step=2, n_process=None, rot_graph=None, from_init=None, each_time=None, info_dict=None):
         self.species = Element(species)
         self.temperature = temperature
         self.step_skip = step_skip
@@ -760,6 +833,7 @@ class RotationAnalyzer:
         self.split = None
         self.part_index = None
         self.structures = structures
+        self.base = base
         start_time = 0 
         '''
         start_time : Seems like Byungju made it to continue adding new trajectories. At this moment, disable this.
@@ -892,37 +966,38 @@ class RotationAnalyzer:
             print('No element in rotation list !!')
 
 
-    def export_rotation_analysis(self, DIR):
-
-        with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
+    def export_rotation_analysis(self):
+        DIR = self.base
+        #os.makedirs('{}/rot'.format(DIR), exist_ok=True)
+        with open('{}/rot/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
-        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+        with open('{}/rot/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
             pickle.dump(self.structures, f)
         if self.part_index==None:
-            if not len(self.rotations_each_time) == 0:
-                np.save("{}/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
-            if not len(self.rotations_from_init) == 0:
-                np.save("{}/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
+            if isinstance(self.rotations_each_time, np.ndarray) and len(self.rotations_each_time):
+                np.save("{}/rot/out_{}.npy".format(DIR,"each_time"), np.array(self.rotations_each_time), allow_pickle=True)
+            if isinstance(self.rotations_from_init, np.ndarray) and len(self.rotations_from_init):
+                np.save("{}/rot/out_{}.npy".format(DIR,"from_init"), np.array(self.rotations_from_init), allow_pickle=True)
             #if not len(self.rot_graph) == 0:
             #    np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         if self.part_index != None:
-            if len(self.rotations_each_time) != 0:
-                np.save("{}/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
-            if len(self.rotations_from_init) != 0:
-                np.save("{}/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
+            if isinstance(self.rotations_each_time, np.ndarray) and len(self.rotations_each_time):
+                np.save("{}/rot/out_{}_{}.npy".format(DIR,"each_time", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_each_time), allow_pickle=True)
+            if isinstance(self.rotations_from_init, np.ndarray) and len(self.rotations_from_init):
+                np.save("{}/rot/out_{}_{}.npy".format(DIR,"from_init", np.char.zfill(str(self.part_index),3)), np.array(self.rotations_from_init), allow_pickle=True)
             #if len(self.rot_graph) != 0:
             #    np.save("{}/out_{}_{}.npy".format(DIR,"rot_graph", np.char.zfill(str(self.part_index),3)), self.rot_graph, allow_pickle=True) 
 
     def export_rot_graph_only(self, DIR):
-        with open('{}/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
+        #os.makedirs('{}/rot'.format(DIR), exist_ok=True)
+        with open('{}/rot/out_{}.pkl'.format(DIR,"info_dict"), 'wb') as f:
             pickle.dump(self.info_dict, f)
-        with open('{}/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
+        with open('{}/rot/out_{}.pkl'.format(DIR, "structures"), 'wb') as f:
             pickle.dump(self.structures, f)
         if not len(self.rot_graph) == 0:
-            np.save("{}/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
+            np.save("{}/rot/out_{}.npy".format(DIR,"rot_graph"), self.rot_graph, allow_pickle=True) 
         
-            
-
+        
 
     def count_rot_from_graph_from_init_atomwise(self, max_time_delay=5000,n_process=None, split=1000, part_index=None):
         '''
@@ -1054,12 +1129,13 @@ class RotationAnalyzer:
         num_dt_frames = int(num_dt_frames)
         all_peaks = []
         min_peak_height_in_rad = min_peak_height*np.pi/180
-        for P_index, arr in enumerate(self.rotations_each_time):
+        for target_index, arr in enumerate(self.rotations_each_time):
             peak, info = scipy.signal.find_peaks([i[num_dt_frames] for i in arr], height=min_peak_height_in_rad, width=peak_width)
-            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights'][i]*180/np.pi
-                            ,"P_index":P_index} for i in range(len(peak))]
+            peak_dict = [{"time":peak[i]*20, "height":info['peak_heights'][i]*180*2/np.pi
+                            ,"target_index":target_index} for i in range(len(peak))]
             all_peaks.append(peak_dict)
-        with open('./single_dt_counter.pkl', 'wb') as f:
+        #os.makedirs("rot", exist_ok=True)
+        with open('{}/rot/single_dt_counter.pkl'.format(self.base, min_peak_height), 'wb') as f:
             pickle.dump(all_peaks, f)
         return all_peaks
 
@@ -1098,7 +1174,7 @@ class RotationAnalyzer:
         num_min_dt_frames = int(num_min_dt_frames)
         full_init_scan = []
         full_init_peak = []
-        for P_index, P in enumerate(self.rotations_each_time):
+        for target_index, P in enumerate(self.rotations_each_time):
             init_scan = []
             init_peak = []
             for t0_index, t0_frame in enumerate(P):
@@ -1124,10 +1200,10 @@ class RotationAnalyzer:
         # Document the position of initial peaks.
         # Now, for each peak position, we change dt and find the maximum value here.
         rot_out = []
-        for P_index, P in enumerate(full_init_peak):
+        for target_index, P in enumerate(full_init_peak):
             P_rots = []
             for init_peak in P:
-                interested_t0 = self.rotations_each_time[P_index][init_peak] # In 1D list of radians with increasing dt at fixed t0
+                interested_t0 = self.rotations_each_time[target_index][init_peak] # In 1D list of radians with increasing dt at fixed t0
                 firstmaxangle, firstmaxdt = self.maxangle(interested_t0, firstmax_detector) # In degrees!
                 # Now that we know when the rotation occured, let's record this rotation event
                 # as a Rotation object.
@@ -1136,17 +1212,17 @@ class RotationAnalyzer:
                 event_time = event_frame*self.step_skip*self.time_step # in fs
                 # duration is recorded as the time to reach the maximum angle
                 duration = duration_frame*self.step_skip*self.time_step # in fs
-                final_q = self.rot_graph[P_index][event_frame+duration_frame][1]
-                init_q = self.rot_graph[P_index][event_frame][1]
+                final_q = self.rot_graph[target_index][event_frame+duration_frame][1]
+                init_q = self.rot_graph[target_index][event_frame][1]
                 rot_quat = final_q * init_q.inverse
                 # Q(final) = P(diff) * I(init)
                 # P(diff) = Q(final)*I(init).inverse
-                # we have [1] because rot_graph[P_index][time_index] = np.array([time in fs, Quaternion object])
+                # we have [1] because rot_graph[target_index][time_index] = np.array([time in fs, Quaternion object])
                 if self.structures:
-                    site = self.structures[init_peak+num_min_dt_frames][P_index+starting_index]
+                    site = self.structures[init_peak+num_min_dt_frames][target_index+starting_index]
                 else:
-                    site = self.info_dict['init_structure'][P_index+starting_index]
-                r = Rotation(time=event_time, duration=duration, angle=firstmaxangle, index=P_index+starting_index,
+                    site = self.info_dict['init_structure'][target_index+starting_index]
+                r = Rotation(time=event_time, duration=duration, angle=firstmaxangle, index=target_index+starting_index,
                              site=site, rotation_q=rot_quat, final_q=final_q, init_q=init_q)
                 P_rots.append(r)
             rot_out.append(P_rots)
@@ -1217,12 +1293,12 @@ class RotationAnalyzer:
         return rotations
     '''
 
-    def plot_rotations(self, mode, time_per_image=50, P_index='all',vmax=180, fname=None, save_directory='.'):
+    def plot_rotations(self, mode, time_per_image=50, target_index='all',vmax=180, fname=None, save_directory='.'):
         import numpy.ma as ma
         '''
         parameter mode: "from_init" or "each_time"
         parameter time_per_image: how to split the long trajectory info (in ps), default = 50 ps
-        parameter P_index: 'all' to plot all information, or P_index (int)
+        parameter target_index: 'all' to plot all information, or P_index (int)
         paramter vmax: maximum degree for the colormap
         parameter filename: default None (not save)
         parameter save_directory: default None, where to save the files
@@ -1263,9 +1339,9 @@ class RotationAnalyzer:
         else:
             print('Wrong mode, please double check')
         for rot_index, rot in enumerate(rotations):
-            if not ((P_index =='all') or (P_index==rot_index)):
+            if not ((target_index =='all') or (target_index==rot_index)):
                 continue
-            print("Plotting {}th-index PS4".format(rot_index))
+            print("Plotting {}th-index {}".format(rot_index, self.species))
 
             for plotpart in indexgenerator(len(rotations[0]), time_per_image * 1000 / self.step_skip / self.time_step):
                 currentlyPlotting = rot[plotpart['start_frame']:plotpart['final_frame']]
@@ -1276,7 +1352,7 @@ class RotationAnalyzer:
                     for index_j, j in enumerate(i):
                         x.append(index_i*self.step_skip*self.time_step/1000)
                         y.append(index_j*self.step_skip*self.time_step/1000)
-                        z.append(j*180/np.pi)
+                        z.append(j*180*2/np.pi)
                 x = np.array(x)
                 y = np.array(y)
                 z = np.array(z)
@@ -1297,13 +1373,16 @@ class RotationAnalyzer:
                 ax.tick_params(axis='both',  reset=True, which='both', direction='out', length=10, width=3, color='black', top=False, right=False, zorder=100000)
                 ax.set_xlabel(r'$t_0$ (ps)')
                 ax.set_ylabel(r'$dt$ (ps)')
+                temp = str(int(self.temperature))+"K"
+                #os.makedirs("{}/{}/rot".format(save_directory, temp), exist_ok=True)
+
                 if fname:
                     fig.savefig(fname+'.pdf', bbox_inches='tight')
                 else:
                     from datetime import datetime
                     now = datetime.now()
-                    filename_tiff = "{}/P_{}_part_{}_T_{}_{}.tiff".format(save_directory, rot_index, plotpart['index'], self.temperature, mode)
-                    filename_pdf = "{}/P_{}_part_{}_T_{}_{}.pdf".format(save_directory, rot_index, plotpart['index'], self.temperature, mode)
+                    filename_tiff = "{}/rot/{}_{}_part_{}_T_{}_{}.tiff".format(self.base, temp, self.species, rot_index, plotpart['index'], self.temperature, mode)
+                    filename_pdf = "{}/rot/{}_{}_part_{}_T_{}_{}.pdf".format(self.base, temp, self.species, rot_index, plotpart['index'], self.temperature, mode)
                     fig.savefig(filename_tiff, bbox_inches='tight', dpi=300)
                     fig.savefig(filename_pdf, bbox_inches='tight')
 
@@ -1428,12 +1507,12 @@ class RotationAnalyzer:
     @classmethod
     def from_npys(cls, DIR):
         print('Reading single npy file')
-        rot_graph = np.load("{}/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
-        from_init = np.load("{}/out_{}.npy".format(DIR, "from_init"), allow_pickle=True)
-        each_time = np.load("{}/out_{}.npy".format(DIR, "each_time"), allow_pickle=True)
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        rot_graph = np.load("{}/rot/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
+        from_init = np.load("{}/rot/out_{}.npy".format(DIR, "from_init"), allow_pickle=True)
+        each_time = np.load("{}/rot/out_{}.npy".format(DIR, "each_time"), allow_pickle=True)
+        with open('{}/rot/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
-        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
+        return cls(None, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph, base=DIR)
 
     @classmethod
     def from_many_npys(cls, DIR, read_structures=False):
@@ -1460,36 +1539,38 @@ class RotationAnalyzer:
         print("Reading each_time")
         each_time = read_output('each_time', DIR, split=True)
         print("Reading info_dict")
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        with open('{}/rot/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='combined'
         if read_structures:
             print("Reading structures")
-            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+            with open('{}/rot/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
                 structures = pickle.load(f)
         else:
             structures = None
         print("RotationAnalyzer ready")
-        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph)
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=from_init,each_time=each_time, rot_graph=rot_graph, base=DIR)
 
     @classmethod
     def from_rot_graph(cls, DIR, read_structures=False):
         print('Reading pre-analyzed rot_graph')
         rot_graph = np.load("{}/out_{}.npy".format(DIR, "rot_graph"), allow_pickle=True)
-        with open('{}/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
+        with open('{}/rot/out_{}.pkl'.format(DIR, "info_dict"), 'rb') as f:
             info_dict = pickle.load(f)
         info_dict['part_index']='rot_graph_read'
         if read_structures:
-            with open('{}/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
+            with open('{}/rot/out_{}.pkl'.format(DIR, "structures"), 'rb') as f:
                 structures = pickle.load(f)
         else:
             structures = None
-        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=None,each_time=None, rot_graph=rot_graph)
+        return cls(structures, species=info_dict['species'], temperature=info_dict['temperature'],info_dict=info_dict, from_init=None,each_time=None, rot_graph=rot_graph, base=DIR)
 
     
     @classmethod
     def from_paths(cls, paths, species, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
         print('Reading structures from list of paths')
+        base = "/".join(paths[0].split("/")[:-1])
+        os.makedirs("{}/hop".format(base), exist_ok=True)
         strs = []
         for x in paths:
             if os.path.exists('{}/vasprun.xml' .format(x)):   
@@ -1497,7 +1578,26 @@ class RotationAnalyzer:
                 strs += temp_str
                 del temp_str
         
-        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph)
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
+
+
+
+    @classmethod
+    def from_base(cls, base, species, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
+        print('Reading structures from a base directory')
+        os.makedirs("{}/rot".format(base), exist_ok=True)
+        path = [x for x in os.listdir(base) if x.startswith('run')]
+        path.sort()
+        full_paths = ['{}/{}' .format(base, x) for x in path]
+        full_paths = full_paths
+        strs = []
+        for x in full_paths:
+            if os.path.exists('{}/vasprun.xml' .format(x)):   
+                temp_str = Vasprun('{}/vasprun.xml' .format(x), ionic_step_skip=step_skip, exception_on_bad_xml=False, parse_potcar_file=False).structures
+                strs += temp_str
+                del temp_str
+        
+        return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
 
 
     '''
@@ -1538,7 +1638,7 @@ class CorrelationCollection:
                         rot_object = RotationAnalyzer.from_many_npys(root + '/' + i, read_structures=False)
                         temp_dictionary = {'T': temp, 'rot_object': rot_object,
                                            'num_frames': len(rot_object.rot_graph[0])}
-                        rot_count_file = "{}/{}/single_dt_counter.pkl".format(root, i)
+                        rot_count_file = "{}/{}/rot/single_dt_counter.pkl".format(root, i)
                         with open(rot_count_file, 'rb') as f:
                             rots = pickle.load(f)
                         temp_dictionary['rots'] = rots
