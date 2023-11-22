@@ -163,7 +163,7 @@ def derive_neighbor_sets(strt, species, starting_index, num_indices, i, tot_num,
     #print([i for i in set(s_copy.species) if i!=Element(species) and i!=Element(neighbor_ion)])
     #s_copy.remove_species([i for i in set(s_copy.species) if i!=species and i!=neighbor_ion])
     LGF.setup_structure(structure=s_copy)
-    se = LGF.compute_structure_environments(only_atoms=[species], maximum_distance_factor=1.5, get_from_hints=True)
+    se = LGF.compute_structure_environments(only_atoms=[species], maximum_distance_factor=2.0, get_from_hints=True)
     ns_list = []
     for x in np.arange(starting_index, starting_index + num_indices):
         '''
@@ -189,19 +189,13 @@ def derive_neighbor_sets(strt, species, starting_index, num_indices, i, tot_num,
         If T:4 is not the lowest-CSM environment, then it should be considered as a dissociation event.
         se.neighbors_sets[x][4][0] type: NeighborsSet object
         '''
-        if 4 in se.neighbors_sets[x].keys():
+        if 6 in se.neighbors_sets[x].keys():
             #if len(se.neighbors_sets[x][4])>1:
             #    print(se.neighbors_sets[x][4], len(se.neighbors_sets[x][4]))
             #if len(se.neighbors_sets[x][4])>1:
             correct_env_found = False
-            print(len(se.neighbors_sets[x][4]))
-            for index, j in enumerate(se.neighbors_sets[x][4]):
-                print(index, j)
-                for atom in j.neighb_sites_and_indices:
-                    print(type(atom['site'].specie))
-                    print(Element(atom['site'].specie))
+            for index, j in enumerate(se.neighbors_sets[x][6]):
                 neighb_sp_set = set([k['site'].specie for k in j.neighb_sites_and_indices])
-                print(len(neighb_sp_set))
                 all_correct_elements = True
                 for el in neighb_sp_set:
                     '''
@@ -254,7 +248,7 @@ def check_csms(strt, species, starting_index, num_indices, i, tot_num, neighbor_
     with HiddenPrints():
         LGF = LocalGeometryFinder()
         LGF.setup_structure(structure=strt)
-        se = LGF.compute_structure_environments(only_atoms=[species], maximum_distance_factor=1.5, get_from_hints=True)
+        se = LGF.compute_structure_environments(only_atoms=[species], maximum_distance_factor=2.0, get_from_hints=True)
         ns_list = []
     for x in np.arange(starting_index, starting_index + num_indices):
         '''
@@ -1952,6 +1946,15 @@ class RotationAnalyzer:
         print(base, len(strs))
         return cls(strs, species, neighbor_list = neighbor_list, temperature=temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
 
+    @classmethod
+    def from_structures(cls, structure_list, species, neighbor_list, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
+        print("This is assuming that every single structure is extracted from the vaspruns, without using step_skip.")
+        print("Step skip is applied after reading these structures")
+        print('Reading structures from list of structures')
+        base = "/".join(paths[0].split("/")[:-1])
+        os.makedirs("{}/rot".format(base), exist_ok=True)
+        strs = structure_list[::10]
+        return cls(strs, species, neighbor_list = neighbor_list, temperature=temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
 
 
     @classmethod
