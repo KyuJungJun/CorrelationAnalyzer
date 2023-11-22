@@ -25,6 +25,8 @@ if __name__ == '__main__':
     result_rot.export_rotation_analysis()
     result_rot.count_rot_from_graph_each_time_atomwise(n_process=16, split=7500, part_index=1)#, radian)
     result_rot.export_rotation_analysis()
+    result_rot.count_rot_from_graph_each_time_atomwise(n_process=16, split=7500, part_index=2)#, radian)
+    result_rot.export_rotation_analysis()
     result_rot = RotationAnalyzer.from_many_npys(DIR)
     result_rot.plot_rotations('each_time')
     result_rot.count_rotations_single_dt(1000, 1) # 2 : hop distance

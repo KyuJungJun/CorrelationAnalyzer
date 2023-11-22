@@ -25,6 +25,8 @@ if __name__ == '__main__':
     result_hop.export_hop_analysis()
     result_hop.count_hop_from_graph_each_time_atomwise(n_process=16, split=7500, part_index= 1)
     result_hop.export_hop_analysis()
+    result_hop.count_hop_from_graph_each_time_atomwise(n_process=16, split=7500, part_index= 2)
+    result_hop.export_hop_analysis()
     result_hop = HopAnalyzer.from_many_npys(DIR)
     result_hop.plot_hops('hop_each_time')
     result_hop.count_hops_single_dt(1000, 3) # 2 : hop distance
