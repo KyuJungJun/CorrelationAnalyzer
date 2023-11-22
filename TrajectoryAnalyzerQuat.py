@@ -2,8 +2,9 @@
 # coding: utf-8
 
 '''
-CorrelationAnalyzer for rotational motions
-Version: Feb 21th-1, 2023
+CorrelationAnalyzer to detect events of rotational motions and translational motion
+and analyze the correlation between such events
+Version: November 22, 2023
 Writer: KyuJung Jun (kjun@berkeley.edu), Dr. Byungju Lee (blee89@kist.re.kr)
 '''
 
@@ -64,7 +65,7 @@ def angle_quat(x,y):
     for measuring rotation similarities when the samples are spread over a "solid" angle of more than pi/2 radians
     (the spread refers to quaternions as point samples on the unit hypersphere).
     '''
-    return Quaternion.absolute_distance(x,y)
+    return min(Quaternion.distance(x, y), Quaternion.distance(x, -y))
 """
 def abs_angle_quat(x,y):
     return Quaternion.distance(x,y)
@@ -78,7 +79,7 @@ def abs_angle_quat(x,y):
     but it takes into account the fact that q and -q encode the same rotation.
     It is thus a good indicator for rotation similarities.
     '''
-    return Quaternion.absolute_distance(x,y)
+    return min(Quaternion.distance(x, y), Quaternion.distance(x, -y))
 
 def angle_two_vector(va, vb):
     cosine_angle = np.round(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb)), decimals=5)
