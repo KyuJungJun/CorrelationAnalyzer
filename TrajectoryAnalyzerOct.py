@@ -1031,6 +1031,18 @@ class HopAnalyzer:
                 del temp_str
         return cls(strs, species, temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, hop_graph=hop_graph, base=base)
 
+
+    @classmethod
+    def from_structures(cls, structure_list, base_path, species, neighbor_list, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
+        print("This is assuming that every single structure is extracted from the vaspruns, without using step_skip.")
+        print("Step skip is applied after reading these structures")
+        print('Reading structures from list of structures')
+        os.makedirs("{}/rot".format(base_path), exist_ok=True)
+        strs = structure_list[::step_skip]
+        return cls(strs, species, neighbor_list = neighbor_list, temperature=temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
+
+
+
     @classmethod
     def from_base(cls, base, species, temperature, step_skip=10, time_step=2, n_process=None, hop_graph=None):
         print('Reading structures from a base directory')
@@ -1947,13 +1959,12 @@ class RotationAnalyzer:
         return cls(strs, species, neighbor_list = neighbor_list, temperature=temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
 
     @classmethod
-    def from_structures(cls, structure_list, species, neighbor_list, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
+    def from_structures(cls, structure_list, base_path, species, neighbor_list, temperature, step_skip=10, time_step=2, n_process=None, rot_graph=None):
         print("This is assuming that every single structure is extracted from the vaspruns, without using step_skip.")
         print("Step skip is applied after reading these structures")
         print('Reading structures from list of structures')
-        base = "/".join(paths[0].split("/")[:-1])
-        os.makedirs("{}/rot".format(base), exist_ok=True)
-        strs = structure_list[::10]
+        os.makedirs("{}/rot".format(base_path), exist_ok=True)
+        strs = structure_list[::step_skip]
         return cls(strs, species, neighbor_list = neighbor_list, temperature=temperature, step_skip=step_skip, time_step=time_step, n_process=n_process, rot_graph=rot_graph, base=base)
 
 
